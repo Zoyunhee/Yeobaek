@@ -18,6 +18,11 @@ import AppInput from "@/components/ui/AppInput";
 import AppButton from "@/components/ui/AppButton";
 import { COLORS } from "@/constants/colors";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const SIGNUP_PENDING_KEY = "signup_pending_pref_v1";
+const PREF_DONE_KEY = "pref_done_v1";
+
 /** 인증코드 오류 다이알로그(간단 Modal) */
 function ErrorDialog({
                          visible,
@@ -95,9 +100,15 @@ export default function Join() {
     const emailRef = useRef<TextInput>(null);
     const codeRef = useRef<TextInput>(null);
 
-    const createAccount = () => {
+    const createAccount = async () => {
         // TODO: 실제 회원가입/검증 로직 연결
-        router.replace("/login");
+
+        // 회원가입 완료 플래그 저장 (첫 로그인 때 preferences 띄우기 용)
+        await AsyncStorage.setItem(SIGNUP_PENDING_KEY, "true");
+        // 테스트/재가입 등 상황에서 남아있을 수 있어서 초기화(선택)
+        await AsyncStorage.removeItem(PREF_DONE_KEY);
+
+        router.replace("/(auth)/login");
     };
 
     const sendVerificationCode = () => {
@@ -107,7 +118,6 @@ export default function Join() {
         setServerCode(generated);
         setEmailVerified(false);
         setCode("");
-        // 필요하면 여기서 토스트/문구 표시
     };
 
     const verifyCode = () => {
@@ -136,7 +146,11 @@ export default function Join() {
                 </View>
 
                 <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-                    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+                    <ScrollView
+                        style={{ flex: 1 }}
+                        contentContainerStyle={styles.container}
+                        keyboardShouldPersistTaps="handled"
+                    >
                         <Text style={styles.label}>아이디 *</Text>
                         <AppInput
                             placeholder="4 - 20자, 영문 + 숫자만 사용"
@@ -184,7 +198,7 @@ export default function Join() {
                             style={styles.input}
                         />
 
-                        {/* 이메일 본인인증 추가 */}
+                        {/* 이메일 본인인증 */}
                         <Text style={styles.label}>이메일 본인 인증 *</Text>
                         <AppInput
                             ref={emailRef}
@@ -202,11 +216,7 @@ export default function Join() {
                             style={styles.input}
                         />
 
-                        <SecondaryButton
-                            title="인증코드 전송하기"
-                            onPress={sendVerificationCode}
-                            disabled={!email.trim()}
-                        />
+                        <SecondaryButton title="인증코드 전송하기" onPress={sendVerificationCode} disabled={!email.trim()} />
 
                         <View style={{ height: 12 }} />
 
@@ -234,11 +244,7 @@ export default function Join() {
                 </KeyboardAvoidingView>
             </SafeAreaView>
 
-            <ErrorDialog
-                visible={errorVisible}
-                message={errorMessage}
-                onClose={() => setErrorVisible(false)}
-            />
+            <ErrorDialog visible={errorVisible} message={errorMessage} onClose={() => setErrorVisible(false)} />
         </>
     );
 }
@@ -282,7 +288,7 @@ const secondaryBtnStyles = StyleSheet.create({
     btn: {
         height: 48,
         borderRadius: 8,
-        backgroundColor: COLORS.secondary, // secondary 색상 베이지
+        backgroundColor: COLORS.secondary,
         justifyContent: "center",
         alignItems: "center",
         borderWidth: 1,
