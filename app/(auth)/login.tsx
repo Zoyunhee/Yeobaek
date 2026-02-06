@@ -16,6 +16,11 @@ import AppInput from "@/components/ui/AppInput";
 import AppButton from "@/components/ui/AppButton";
 import { COLORS } from "@/constants/colors";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const SIGNUP_PENDING_KEY = "signup_pending_pref_v1";
+const PREF_DONE_KEY = "pref_done_v1";
+
 export default function Login() {
     const router = useRouter();
 
@@ -23,11 +28,22 @@ export default function Login() {
     const [password, setPassword] = useState("");
     const pwRef = useRef<TextInput>(null);
 
-    const onSubmit = () => {
-        router.replace("/(tabs)"); // 가짜 로그인 → 홈(탭)으로
+    const onSubmit = async () => {
+        // TODO: 백엔드 붙이면 여기서 로그인 API 호출 후 "성공"일 때만 아래 실행
+
+        const signupPending = await AsyncStorage.getItem(SIGNUP_PENDING_KEY);
+        const prefDone = await AsyncStorage.getItem(PREF_DONE_KEY);
+
+        // ✅ 회원가입 직후 첫 로그인만 preferences
+        if (signupPending === "true" && prefDone !== "true") {
+            router.replace("/(auth)/categoryselect");
+            return;
+        }
+
+        router.replace("/(tabs)");
     };
 
-    const goJoin = () => router.push("/join");
+    const goJoin = () => router.push("/(auth)/join");
 
     return (
         <>
