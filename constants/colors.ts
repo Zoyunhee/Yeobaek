@@ -8,9 +8,15 @@ export const COLORS = {
     error: "#E53935",
     text: "#111111",
 
+    //feat: categoryselect에서 추가
     primaryDark: "#673D12",
     black: "#000000",
     stepGreen: "#126746",
     mint: "#49B48B",
+
+    //feat: home에서 추가
+    neutralDark: "#828282",
+    neutralLightDarkest: "#B3B3B3",
+    mintLight: "#DCF4EB",
 
 } as const;

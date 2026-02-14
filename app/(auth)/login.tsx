@@ -34,7 +34,7 @@ export default function Login() {
         const signupPending = await AsyncStorage.getItem(SIGNUP_PENDING_KEY);
         const prefDone = await AsyncStorage.getItem(PREF_DONE_KEY);
 
-        // ✅ 회원가입 직후 첫 로그인만 preferences
+        // 회원가입 직후 첫 로그인만 preferences
         if (signupPending === "true" && prefDone !== "true") {
             router.replace("/(auth)/categoryselect");
             return;
