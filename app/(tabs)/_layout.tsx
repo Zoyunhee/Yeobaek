@@ -12,8 +12,6 @@ export default function TabLayout() {
                 headerShown: false,
                 tabBarButton: HapticTab,
                 tabBarShowLabel: true,
-
-                // 색 통일
                 tabBarActiveTintColor: COLORS.primary,
                 tabBarInactiveTintColor: COLORS.primary,
                 tabBarStyle: {
@@ -32,8 +30,21 @@ export default function TabLayout() {
                     tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
                 }}
             />
+            <Tabs.Screen
+                name="chat"
+                options={{
+                    title: "Chat",
+                    tabBarIcon: ({ color }) => <IconSymbol size={28} name="book" color={color} />,
+                }}
+            />
+            <Tabs.Screen
+                name="profile"
+                options={{
+                    title: "Proflie",
+                    tabBarIcon: ({ color }) => <IconSymbol size={28} name="person" color={color} />,
+                }}
+            />
 
-            {/* 나중에 chat/profile 추가할 때 여기에 추가 */}
         </Tabs>
     );
 }
