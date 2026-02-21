@@ -21,13 +21,30 @@ type ChipValue = string;
 const SIGNUP_PENDING_KEY = "signup_pending_pref_v1";
 const PREF_DONE_KEY = "pref_done_v1";
 
+// ✅ Profile에서 읽을 취향 저장 키
+const PREF_GENRES_KEY = "pref_genres_v1";
+const PREF_STYLES_KEY = "pref_styles_v1";
+
 const STEP1_MAX = 3;
 const STEP2_MAX = 2;
 
 const STEP1_GENRES: ChipValue[] = [
-    "로맨스", "스릴러", "판타지", "SF", "미스터리",
-    "성장소설", "역사소설", "휴먼드라마", "에세이",
-    "인문", "사회", "철학", "심리", "자기계발", "경제 경영", "과학",
+    "로맨스",
+    "스릴러",
+    "판타지",
+    "SF",
+    "미스터리",
+    "성장소설",
+    "역사소설",
+    "휴먼드라마",
+    "에세이",
+    "인문",
+    "사회",
+    "철학",
+    "심리",
+    "자기계발",
+    "경제 경영",
+    "과학",
 ];
 
 const STEP2_STYLES: ChipValue[] = [
@@ -190,8 +207,9 @@ export default function Preferences() {
             return;
         }
 
-        // TODO: 백엔드 붙일 때 서버 저장
-        // await api.savePreference({ genres, readingStyles })
+        // ✅ 취향 선택 결과 저장 (Profile에서 읽어올 것)
+        await AsyncStorage.setItem(PREF_GENRES_KEY, JSON.stringify(genres));
+        await AsyncStorage.setItem(PREF_STYLES_KEY, JSON.stringify(readingStyles));
 
         // 취향 설정 완료
         await AsyncStorage.setItem(PREF_DONE_KEY, "true");
@@ -375,7 +393,7 @@ const styles = StyleSheet.create({
     },
 
     button: {
-        marginTop: 24, // AppButton 자체 height/radius는 공통 스타일
+        marginTop: 24,
     },
 
     toast: {

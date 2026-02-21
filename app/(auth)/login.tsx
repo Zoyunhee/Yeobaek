@@ -16,11 +16,6 @@ import AppInput from "@/components/ui/AppInput";
 import AppButton from "@/components/ui/AppButton";
 import { COLORS } from "@/constants/colors";
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
-const SIGNUP_PENDING_KEY = "signup_pending_pref_v1";
-const PREF_DONE_KEY = "pref_done_v1";
-
 export default function Login() {
     const router = useRouter();
 
@@ -29,18 +24,8 @@ export default function Login() {
     const pwRef = useRef<TextInput>(null);
 
     const onSubmit = async () => {
-        // TODO: 백엔드 붙이면 여기서 로그인 API 호출 후 "성공"일 때만 아래 실행
-
-        const signupPending = await AsyncStorage.getItem(SIGNUP_PENDING_KEY);
-        const prefDone = await AsyncStorage.getItem(PREF_DONE_KEY);
-
-        // 회원가입 직후 첫 로그인만 preferences
-        if (signupPending === "true" && prefDone !== "true") {
-            router.replace("/(auth)/categoryselect");
-            return;
-        }
-
-        router.replace("/(tabs)");
+        // ✅ 개발용: 로그인 성공했다고 치고 무조건 취향선택 화면으로
+        router.replace("/(auth)/categoryselect");
     };
 
     const goJoin = () => router.push("/(auth)/join");
@@ -51,10 +36,7 @@ export default function Login() {
 
             <SafeAreaView style={styles.safeArea}>
                 <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-                    <KeyboardAvoidingView
-                        behavior={Platform.OS === "ios" ? "padding" : undefined}
-                        style={{ flex: 1 }}
-                    >
+                    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
                         <View style={styles.container}>
                             <Text style={styles.logo}>여백 餘白</Text>
 
@@ -88,12 +70,7 @@ export default function Login() {
                                 <View style={styles.divider} />
                             </View>
 
-                            <AppButton
-                                title="회원가입 하러 가기"
-                                onPress={goJoin}
-                                variant="secondary"
-                                style={styles.btn}
-                            />
+                            <AppButton title="회원가입 하러 가기" onPress={goJoin} variant="secondary" style={styles.btn} />
                         </View>
                     </KeyboardAvoidingView>
                 </TouchableWithoutFeedback>
