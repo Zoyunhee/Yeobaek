@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import Svg, { Path, Circle, Rect, Line, Text as SvgText } from "react-native-svg";
 
 type Book = { id: string; title: string; author: string; createdAt?: string; coverUrl?: string };
 type CompletedChat = { id: string; createdAt?: string; coverUrl?: string };
@@ -43,6 +44,16 @@ function pickLatest<T extends { createdAt?: string }>(arr: T[]) {
     const withDate = arr.filter((x) => x.createdAt && !Number.isNaN(new Date(x.createdAt!).getTime()));
     if (withDate.length === 0) return arr[0];
     return [...withDate].sort((a, b) => +new Date(b.createdAt!) - +new Date(a.createdAt!))[0];
+}
+
+/** ✅ 프리뷰용 더미 (백엔드 붙이면 여기만 교체하면 됨) */
+function makePreviewLine() {
+    // 00, 04, 08, 12, 16, 20, 24
+    return [8, 6, 7, 10, 15, 14, 11];
+}
+function makePreviewEmotions() {
+    // HAPPY, SAD, NEUTRAL
+    return { happy: 60, sad: 30, neutral: 10 };
 }
 
 export default function ProfileScreen() {
@@ -107,11 +118,6 @@ export default function ProfileScreen() {
         load();
     }, [load]);
 
-    /*const hashText = useMemo(() => {
-        const tags = [...genres.map((g) => `#${g}`), ...stylesPref.map((s) => `#${s}`)];
-        return tags.join(" ");
-    }, [genres, stylesPref]);*/
-
     // counts
     const likedCount = likedBooks.length;
     const completedCount = completedChats.length;
@@ -128,11 +134,14 @@ export default function ProfileScreen() {
 
     // latest preview (지금은 백엔드 없으니 coverUrl 있어도 일단 BOOK_COVER로 표시)
     const likedPreview = useMemo(() => (pickLatest(likedBooks) ? BOOK_COVER : null), [likedBooks]);
-    const completedPreview = useMemo(
-        () => (pickLatest(completedChats) ? BOOK_COVER : null),
-        [completedChats]
-    );
+    const completedPreview = useMemo(() => (pickLatest(completedChats) ? BOOK_COVER : null), [completedChats]);
     const notePreview = useMemo(() => (pickLatest(notes) ? BOOK_COVER : null), [notes]);
+
+    // ✅ 독서 성향 프리뷰용 더미 (백엔드 붙이면 여기만 교체)
+    const thinkingStyle = "사색형";
+    const weeklyChats = 0;
+    const emotions = useMemo(() => makePreviewEmotions(), []);
+    const line = useMemo(() => makePreviewLine(), []);
 
     return (
         <SafeAreaView style={styles.safe}>
@@ -157,6 +166,7 @@ export default function ProfileScreen() {
                     <Image source={DEFAULT_AVATAR} style={styles.avatar} />
                     <View style={{ flex: 1 }}>
                         <Text style={styles.name}>은석</Text>
+
                         <View style={{ marginTop: 6 }}>
                             {/* 윗줄: 장르 */}
                             <Text style={styles.hash} numberOfLines={1}>
@@ -164,9 +174,12 @@ export default function ProfileScreen() {
                             </Text>
                             {/* 아랫줄: 읽는 방식 */}
                             <Text style={[styles.hash, { marginTop: 2 }]} numberOfLines={1}>
-                                {stylesPref.length > 0 ? stylesPref.map((s) => `#${s}`).join(" ") : "#읽는 방식을 선택해 주세요"}
+                                {stylesPref.length > 0
+                                    ? stylesPref.map((s) => `#${s}`).join(" ")
+                                    : "#읽는 방식을 선택해 주세요"}
                             </Text>
                         </View>
+
                         <Text style={styles.sub}>이번 달 대화 {monthlyChatCount}회</Text>
                     </View>
                 </View>
@@ -181,32 +194,42 @@ export default function ProfileScreen() {
 
                     <View style={styles.statsRow}>
                         <StatBlock icon="heart" label="찜" value={`${likedCount}권`} previewCover={likedPreview} />
-                        <StatBlock
-                            icon="bubble"
-                            label="완료 채팅"
-                            value={`${completedCount}회`}
-                            previewCover={completedPreview}
-                        />
+                        <StatBlock icon="bubble" label="완료 채팅" value={`${completedCount}회`} previewCover={completedPreview} />
                         <StatBlock icon="book" label="독서장" value={`${noteCount}장`} previewCover={notePreview} />
                     </View>
                 </Pressable>
 
-                {/* 나의 독서 성향 */}
+                {/* ✅ 나의 독서 성향 (프리뷰 카드 버전) */}
                 <Pressable
                     onPress={() => router.push("/(profile)/reading-preference")}
                     style={({ pressed }) => [styles.card, pressed && { opacity: 0.92 }]}
                 >
-                    <Text style={styles.cardTitle}>나의 독서 성향</Text>
+                    <View style={previewStyles.headerRow}>
+                        <Text style={styles.cardTitle}>나의 독서 성향</Text>
+                        <View style={{ flex: 1 }} />
+                        <Text style={previewStyles.moreText}>통계 보러가기</Text>
+                        <Text style={previewStyles.moreArrow}>›</Text>
+                    </View>
+
                     <View style={styles.cardLine} />
 
-                    <View style={{ marginTop: 14, gap: 14 }}>
-                        <BulletRow title="대화 사고 스타일" value="사색형" />
-                        <BulletRow title="최근 감정 Top 1" value="행복한 이모티콘" />
-                        <BulletRow title="일주일 채팅 사용" value={`${0}회`} />
-                    </View>
-                </Pressable>
+                    <View style={previewStyles.bullets}>
+                        <BulletRow title="사고 스타일" value={thinkingStyle} />
+                        <BulletRow title="최근 감정 Top1" value="😁" />
 
-                <Text style={styles.logout}>로그 아웃</Text>
+                        {/* ✅ 감정 비율을 Top1 바로 아래로 이동 */}
+                        <View style={previewStyles.emojiRow}>
+                            <Text style={previewStyles.emojiItem}>😁 {emotions.happy}%</Text>
+                            <Text style={previewStyles.emojiItem}>😭 {emotions.sad}%</Text>
+                            <Text style={previewStyles.emojiItem}>😶 {emotions.neutral}%</Text>
+                        </View>
+
+                        <BulletRow title="최근 7일 채팅" value={`${weeklyChats}회`} />
+                    </View>
+
+                    <Text style={previewStyles.miniTitle}>[ 미니 채팅 시간 그래프 ]</Text>
+                    <MiniLineChart values={line} />
+                </Pressable>
             </ScrollView>
         </SafeAreaView>
     );
@@ -223,8 +246,7 @@ function StatBlock({
     value: string;
     previewCover: any | null;
 }) {
-    const iconName =
-        icon === "heart" ? "heart" : icon === "bubble" ? "bubble.left" : "book";
+    const iconName = icon === "heart" ? "heart" : icon === "bubble" ? "bubble.left" : "book";
 
     return (
         <View style={styles.statItem}>
@@ -247,6 +269,66 @@ function BulletRow({ title, value }: { title: string; value: string }) {
             <Text style={styles.bulletText}>
                 {title} : <Text style={styles.bulletValue}>{value}</Text>
             </Text>
+        </View>
+    );
+}
+
+/** ✅ 아주 작은 라인차트 (프리뷰 전용) */
+function MiniLineChart({ values }: { values: number[] }) {
+    const W = 320;
+    const H = 88;
+
+    const padL = 16;
+    const padR = 12;
+    const padT = 14;
+    const padB = 18;
+
+    const maxV = Math.max(...values, 1);
+    const minV = 0;
+
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const step = plotW / (values.length - 1);
+
+    const pts = values.map((v, i) => {
+        const x = padL + i * step;
+        const t = (v - minV) / (maxV - minV || 1);
+        const y = padT + (1 - t) * plotH;
+        return { x, y };
+    });
+
+    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+
+    return (
+        <View style={previewStyles.miniChartWrap}>
+            <Svg width={W} height={H}>
+                <Rect x={0} y={0} width={W} height={H} rx={12} ry={12} fill={COLORS.white} />
+                {/* 가이드 라인 */}
+                <Line x1={padL} x2={W - padR} y1={padT + plotH * 0.5} y2={padT + plotH * 0.5} stroke="#E9E9E9" strokeWidth={1} />
+                {/* 라인 */}
+                <Path d={d} fill="none" stroke="#6C7BFF" strokeWidth={2.5} />
+                {pts.map((p, i) => (
+                    <Circle key={i} cx={p.x} cy={p.y} r={3.6} fill="#6C7BFF" />
+                ))}
+
+                {/* x축 라벨(짧게) */}
+                {["00", "04", "08", "12", "16", "20", "24"].map((t, i) => {
+                    const x = padL + i * step;
+                    const isLast = i === 6;
+                    return (
+                        <SvgText
+                            key={t}
+                            x={isLast ? W - padR : x}
+                            y={H - 6}
+                            fontSize={10}
+                            fill={COLORS.primary}
+                            textAnchor={isLast ? "end" : "middle"}
+                        >
+                            {t}
+                        </SvgText>
+                    );
+                })}
+            </Svg>
         </View>
     );
 }
@@ -293,7 +375,6 @@ const styles = StyleSheet.create({
         letterSpacing: -0.5,
     },
     hash: {
-        marginTop: 6,
         fontSize: 14,
         fontWeight: "800",
         color: COLORS.primary,
@@ -390,12 +471,55 @@ const styles = StyleSheet.create({
         fontWeight: "900",
         color: COLORS.primary,
     },
+});
 
-    logout: {
-        marginTop: 28,
-        textAlign: "center",
+const previewStyles = StyleSheet.create({
+    headerRow: {
+        flexDirection: "row",
+        alignItems: "center",
+    },
+    moreText: {
         fontSize: 12,
-        fontWeight: "800",
+        fontWeight: "900",
         color: COLORS.muted,
+    },
+    moreArrow: {
+        marginLeft: 4,
+        fontSize: 18,
+        fontWeight: "900",
+        color: COLORS.muted,
+        lineHeight: 18,
+    },
+
+    bullets: {
+        marginTop: 14,
+        gap: 12,
+    },
+
+    miniTitle: {
+        marginTop: 14,
+        fontSize: 12,
+        fontWeight: "900",
+        color: COLORS.primary,
+        textAlign: "center",
+        opacity: 0.95,
+    },
+
+    miniChartWrap: {
+        marginTop: 10,
+        alignItems: "center",
+    },
+
+    emojiRow: {
+        marginTop: 6,
+        marginBottom: 4,
+        flexDirection: "row",
+        justifyContent: "center",
+        gap: 14,
+    },
+    emojiItem: {
+        fontSize: 13,
+        fontWeight: "900",
+        color: COLORS.primary,
     },
 });
