@@ -7,6 +7,9 @@ import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import Svg, { Path, Circle, Rect, Line, Text as SvgText } from "react-native-svg";
 
+// ✅ added: 설정 저장 후 돌아오면 즉시 반영
+import { useFocusEffect } from "@react-navigation/native";
+
 type Book = { id: string; title: string; author: string; createdAt?: string; coverUrl?: string };
 type CompletedChat = { id: string; createdAt?: string; coverUrl?: string };
 type Note = { id: string; createdAt?: string; coverUrl?: string };
@@ -21,6 +24,10 @@ const NOTES_KEY = "reading_notes_v1";
 
 // 이번 달 대화 이벤트 로그(추천 방식)
 const MONTHLY_CHAT_EVENTS_KEY = "monthly_chat_events_v1";
+
+// ✅ added: 닉네임/프로필 사진 저장 키 (설정 화면들과 동일해야 함)
+const PROFILE_NICKNAME_KEY = "profile_nickname_v1";
+const PROFILE_AVATAR_URI_KEY = "profile_avatar_uri_v1";
 
 const DEFAULT_AVATAR = require("../../assets/images/default-avatar.png");
 const BOOK_COVER = require("../../assets/images/book-cover.png");
@@ -59,6 +66,10 @@ function makePreviewEmotions() {
 export default function ProfileScreen() {
     const router = useRouter();
 
+    // ✅ added: 닉네임/아바타 상태
+    const [nickname, setNickname] = useState("은석");
+    const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
     const [genres, setGenres] = useState<string[]>([]);
     const [stylesPref, setStylesPref] = useState<string[]>([]);
 
@@ -68,7 +79,11 @@ export default function ProfileScreen() {
     const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
 
     const load = useCallback(async () => {
-        const [gRaw, sRaw, bRaw, cRaw, nRaw, eRaw] = await Promise.all([
+        // ✅ changed: 닉네임/아바타도 같이 로드
+        const [nickRaw, avatarRaw, gRaw, sRaw, bRaw, cRaw, nRaw, eRaw] = await Promise.all([
+            AsyncStorage.getItem(PROFILE_NICKNAME_KEY),
+            AsyncStorage.getItem(PROFILE_AVATAR_URI_KEY),
+
             AsyncStorage.getItem(PREF_GENRES_KEY),
             AsyncStorage.getItem(PREF_STYLES_KEY),
             AsyncStorage.getItem(LIKED_BOOKS_KEY),
@@ -76,6 +91,10 @@ export default function ProfileScreen() {
             AsyncStorage.getItem(NOTES_KEY),
             AsyncStorage.getItem(MONTHLY_CHAT_EVENTS_KEY),
         ]);
+
+        // ✅ added: nickname/avatar 적용
+        setNickname(nickRaw && nickRaw.trim().length > 0 ? nickRaw : "은석");
+        setAvatarUri(avatarRaw && avatarRaw.trim().length > 0 ? avatarRaw : null);
 
         // hashtags
         try {
@@ -118,6 +137,14 @@ export default function ProfileScreen() {
         load();
     }, [load]);
 
+    // ✅ added: 설정 저장 후 back 하면 즉시 반영(닉네임/사진)
+    useFocusEffect(
+        useCallback(() => {
+            load();
+            return () => {};
+        }, [load])
+    );
+
     // counts
     const likedCount = likedBooks.length;
     const completedCount = completedChats.length;
@@ -151,11 +178,9 @@ export default function ProfileScreen() {
                     <IconSymbol name="chevron.left" size={20} color={COLORS.primary} />
                 </Pressable>
                 <View style={{ flex: 1 }} />
-                <Pressable
-                    onPress={() => Alert.alert("설정", "설정 화면은 나중에 연결하면 돼요.")}
-                    hitSlop={12}
-                    style={styles.headerIconBtn}
-                >
+
+                {/* ... 설정 누르면 설정 허브로 이동 */}
+                <Pressable onPress={() => router.push("/(profile)/settings")} hitSlop={12} style={styles.headerIconBtn}>
                     <IconSymbol name="ellipsis" size={20} color={COLORS.primary} />
                 </Pressable>
             </View>
@@ -163,9 +188,12 @@ export default function ProfileScreen() {
             <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
                 {/* 프로필 */}
                 <View style={styles.profileRow}>
-                    <Image source={DEFAULT_AVATAR} style={styles.avatar} />
+
+                    <Image source={avatarUri ? ({ uri: avatarUri } as any) : DEFAULT_AVATAR} style={styles.avatar} />
+
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.name}>은석</Text>
+
+                        <Text style={styles.name}>{nickname}</Text>
 
                         <View style={{ marginTop: 6 }}>
                             {/* 윗줄: 장르 */}
@@ -174,9 +202,7 @@ export default function ProfileScreen() {
                             </Text>
                             {/* 아랫줄: 읽는 방식 */}
                             <Text style={[styles.hash, { marginTop: 2 }]} numberOfLines={1}>
-                                {stylesPref.length > 0
-                                    ? stylesPref.map((s) => `#${s}`).join(" ")
-                                    : "#읽는 방식을 선택해 주세요"}
+                                {stylesPref.length > 0 ? stylesPref.map((s) => `#${s}`).join(" ") : "#읽는 방식을 선택해 주세요"}
                             </Text>
                         </View>
 
@@ -199,7 +225,7 @@ export default function ProfileScreen() {
                     </View>
                 </Pressable>
 
-                {/* ✅ 나의 독서 성향 (프리뷰 카드 버전) */}
+                {/*  나의 독서 성향 (프리뷰 카드) */}
                 <Pressable
                     onPress={() => router.push("/(profile)/reading-preference")}
                     style={({ pressed }) => [styles.card, pressed && { opacity: 0.92 }]}
@@ -217,7 +243,7 @@ export default function ProfileScreen() {
                         <BulletRow title="사고 스타일" value={thinkingStyle} />
                         <BulletRow title="최근 감정 Top1" value="😁" />
 
-                        {/* ✅ 감정 비율을 Top1 바로 아래로 이동 */}
+                        {/* 감정 비율을 Top1 바로 아래 */}
                         <View style={previewStyles.emojiRow}>
                             <Text style={previewStyles.emojiItem}>😁 {emotions.happy}%</Text>
                             <Text style={previewStyles.emojiItem}>😭 {emotions.sad}%</Text>
@@ -273,7 +299,7 @@ function BulletRow({ title, value }: { title: string; value: string }) {
     );
 }
 
-/** ✅ 아주 작은 라인차트 (프리뷰 전용) */
+/**  아주 작은 라인차트 (프리뷰 전용) */
 function MiniLineChart({ values }: { values: number[] }) {
     const W = 320;
     const H = 88;

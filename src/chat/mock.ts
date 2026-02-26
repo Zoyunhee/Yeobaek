@@ -9,6 +9,7 @@ export const mockAiRooms: AiRoom[] = [
         mood: 4,
         createdAt: new Date().toISOString(),
         lastMessage: "마지막 대화…",
+        status: "IN_PROGRESS",
     },
 ];
 
@@ -24,6 +25,10 @@ export const mockGroupRooms: GroupRoom[] = [
         maxPeople: 4,
         joinedPeople: 2,
         status: "IN_PROGRESS", // ✅ 종료 전까지 진행중
+        mood1: "",
+        mood2: "",
+        mood3: "",
+        mood4: "",
     },
     {
         id: "g-ended",
@@ -35,6 +40,10 @@ export const mockGroupRooms: GroupRoom[] = [
         maxPeople: 4,
         joinedPeople: 4,
         status: "ENDED", // ✅ 리스트에서 안 보이게
+        mood1: "",
+        mood2: "",
+        mood3: "",
+        mood4: "",
     },
 ];
 

@@ -1,4 +1,5 @@
 // src/chat/types.ts
+export type MoodScore = 0 | 1 | 2 | 3 | 4 | 5;
 export type ChatMessageSender = "ME" | "AI" | "USER";
 export type RoomStatus = "IN_PROGRESS" | "ENDED";
 
