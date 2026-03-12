@@ -4,18 +4,23 @@ import { Keyboard, Pressable, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 
-export default function ChatInput({ onSend }: { onSend: (text: string) => void }) {
+interface Props {
+    onSend: (text: string) => void | Promise<void>;
+    disabled?: boolean;
+}
+
+export default function ChatInput({ onSend, disabled = false }: Props) {
     const [value, setValue] = useState("");
     const [contentH, setContentH] = useState(18);
 
-    const minH = 34;   // ✅ 얇게
-    const maxH = 84;   // ✅ 너무 커지지 않게
+    const minH = 34;
+    const maxH = 84;
 
     const inputH = useMemo(() => Math.min(maxH, Math.max(minH, contentH + 10)), [contentH]);
 
     const send = () => {
         const t = value.trim();
-        if (!t) return;
+        if (!t || disabled) return;
         onSend(t);
         setValue("");
         setContentH(18);
@@ -28,7 +33,7 @@ export default function ChatInput({ onSend }: { onSend: (text: string) => void }
                 flexDirection: "row",
                 gap: 10,
                 paddingHorizontal: 12,
-                paddingVertical: 8,                 // ✅ 얇게
+                paddingVertical: 8,
                 borderTopWidth: 1,
                 borderTopColor: COLORS.border,
                 backgroundColor: COLORS.bg,
@@ -43,7 +48,8 @@ export default function ChatInput({ onSend }: { onSend: (text: string) => void }
                     borderColor: COLORS.border,
                     borderRadius: 10,
                     paddingHorizontal: 12,
-                    paddingVertical: 6,              // ✅ 얇게
+                    paddingVertical: 6,
+                    opacity: disabled ? 0.5 : 1,
                 }}
             >
                 <TextInput
@@ -52,11 +58,12 @@ export default function ChatInput({ onSend }: { onSend: (text: string) => void }
                     placeholder="메시지..."
                     placeholderTextColor={COLORS.muted}
                     multiline
+                    editable={!disabled}
                     style={{
                         color: COLORS.text,
                         fontSize: 15,
                         height: inputH,
-                        padding: 0,                    // ✅ iOS/Android 두께 줄이는 핵심
+                        padding: 0,
                         margin: 0,
                     }}
                     onContentSizeChange={(e) => setContentH(e.nativeEvent.contentSize.height)}
@@ -67,11 +74,12 @@ export default function ChatInput({ onSend }: { onSend: (text: string) => void }
 
             <Pressable
                 onPress={send}
+                disabled={disabled}
                 style={{
                     width: 44,
-                    height: 44,                      // ✅ 버튼도 살짝 줄임
+                    height: 44,
                     borderRadius: 10,
-                    backgroundColor: COLORS.primary,
+                    backgroundColor: disabled ? COLORS.border : COLORS.primary,
                     alignItems: "center",
                     justifyContent: "center",
                 }}

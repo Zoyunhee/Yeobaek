@@ -3,9 +3,24 @@ import { Text, View } from "react-native";
 import { COLORS } from "@/constants/colors";
 
 export default function MessageBubble({ isMe, text, senderName }: { isMe: boolean; text: string; senderName?: string }) {
+
+    // AI 메시지이고 물음표가 포함된 경우 → 발제문 스타일
+    const isQuestion = !isMe && text.includes("?");
+
     return (
-        <View style={{ alignSelf: isMe ? "flex-end" : "flex-start", maxWidth: "78%", marginVertical: 6 }}>
-            {!isMe && senderName ? <Text style={{ color: COLORS.muted, fontSize: 12, marginBottom: 4 }}>{senderName}</Text> : null}
+        <View
+            style={{
+                alignSelf: isMe ? "flex-end" : "flex-start",
+                maxWidth: "78%",
+                marginVertical: 6,
+            }}
+        >
+            {!isMe && senderName ? (
+                <Text style={{ color: COLORS.muted, fontSize: 12, marginBottom: 4 }}>
+                    {senderName}
+                </Text>
+            ) : null}
+
             <View
                 style={{
                     backgroundColor: isMe ? COLORS.mint : COLORS.mintLight,
@@ -14,6 +29,9 @@ export default function MessageBubble({ isMe, text, senderName }: { isMe: boolea
                     borderRadius: 16,
                     borderTopRightRadius: isMe ? 6 : 16,
                     borderTopLeftRadius: isMe ? 16 : 6,
+                    // 물음표 있는 AI 메시지일 때만 테두리 추가
+                    borderWidth: isQuestion ? 1.5 : 0,
+                    borderColor: isQuestion ? COLORS.mint : "transparent",
                 }}
             >
                 <Text style={{ color: COLORS.primary, lineHeight: 20 }}>{text}</Text>

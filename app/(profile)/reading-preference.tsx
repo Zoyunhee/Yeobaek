@@ -8,6 +8,7 @@ import {
     FlatList,
     ScrollView,
     useWindowDimensions,
+    Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
@@ -16,11 +17,24 @@ import { Ionicons } from "@expo/vector-icons";
 import Svg, { G, Line, Path, Circle, Text as SvgText, Rect } from "react-native-svg";
 
 import { COLORS } from "@/constants/colors";
+import {
+    getActivityStats,
+    getEmotionGenreStats,
+    getThinkingStyleStats,
+} from "@/services/api";
 
 const PREF_GENRES_KEY = "pref_genres_v1";
 
 type LinePoint = { xLabel: string; hour: number; value: number };
 type PieSlice = { key: string; emoji: string; value: number; color: string };
+
+type ThinkingStyleApi = {
+    critic: number;
+    emotion: number;
+    analysis: number;
+    empathy: number;
+    creative: number;
+};
 
 function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
     const a = ((angleDeg - 90) * Math.PI) / 180.0;
@@ -38,42 +52,6 @@ function getNowYears() {
     const now = new Date();
     const y = now.getFullYear();
     return [y, y - 1, y - 2, y - 3, y - 4];
-}
-
-/** 더미: (연/월 선택)에 따라 값만 살짝 바뀌게 */
-function makeDummyLineData(year: number | null, month: number | null): LinePoint[] {
-    const base = year ? (year % 7) : 2;
-    const m = month ? month : 0;
-
-    const raw = [
-        21 + base + (m % 2),
-        19 + base,
-        20 + base + (m % 3),
-        24 + base + (m % 2),
-        30 + base + (m % 3),
-        29 + base,
-        23 + base + (m % 2),
-    ];
-
-    const hours = [0, 4, 8, 12, 16, 20, 24];
-    return hours.map((h, i) => ({
-        hour: h,
-        xLabel: `${String(h).padStart(2, "0")}시`,
-        value: raw[i],
-    }));
-}
-
-function makeDummyPieData(genre: string): PieSlice[] {
-    const seed = Array.from(genre).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-    const a = 60 + (seed % 40);
-    const b = 30 + (seed % 25);
-    const c = 8 + (seed % 12);
-
-    return [
-        { key: "HAPPY", emoji: "😁", value: a, color: "#6C7BFF" },
-        { key: "SAD", emoji: "😭", value: b, color: "#6FCF97" },
-        { key: "NEUTRAL", emoji: "😶", value: c, color: "#F2C94C" },
-    ];
 }
 
 function DropdownButton({
@@ -147,12 +125,11 @@ function OptionModal<T>({
 function LineChart({ data }: { data: LinePoint[] }) {
     const { width: screenW } = useWindowDimensions();
 
-    // ✅ 화면 기준 반응형
-    const W = Math.min(380, Math.max(300, screenW - 36)); // 너무 작으면 300까지 보장
+    const W = Math.min(380, Math.max(300, screenW - 36));
     const H = 210;
 
     const paddingL = 40;
-    const paddingR = 26; // ✅ 오른쪽 라벨 잘림 방지
+    const paddingR = 26;
     const paddingT = 16;
     const paddingB = 44;
 
@@ -217,8 +194,8 @@ function LineChart({ data }: { data: LinePoint[] }) {
                     return (
                         <SvgText
                             key={i}
-                            x={isLast ? W - paddingR : p.x}  // ✅ 마지막 라벨은 화면 끝 기준 고정
-                            y={H - 16}                       // ✅ 기존(H-10)보다 아래로 내림
+                            x={isLast ? W - paddingR : p.x}
+                            y={H - 16}
                             fontSize={11}
                             fill={COLORS.primary}
                             textAnchor={isLast ? "end" : "middle"}
@@ -235,8 +212,7 @@ function LineChart({ data }: { data: LinePoint[] }) {
 function PieChart({ slices }: { slices: PieSlice[] }) {
     const { width: screenW } = useWindowDimensions();
 
-    // ✅ 반응형 파이 사이즈
-    const pieSize = Math.min(260, Math.max(210, screenW - 140)); // legend 공간 고려
+    const pieSize = Math.min(260, Math.max(210, screenW - 140));
     const r = pieSize * 0.38;
     const cx = pieSize * 0.45;
     const cy = pieSize * 0.5;
@@ -293,10 +269,58 @@ function PieChart({ slices }: { slices: PieSlice[] }) {
     );
 }
 
+function getThinkingStyleLabel(data: ThinkingStyleApi | null) {
+    if (!data) return "“ 아직 분석 데이터가 없습니다 ”";
+
+    const entries = [
+        { key: "critic", label: "비평형", value: data.critic },
+        { key: "emotion", label: "감정형", value: data.emotion },
+        { key: "analysis", label: "분석형", value: data.analysis },
+        { key: "empathy", label: "공감형", value: data.empathy },
+        { key: "creative", label: "창의형", value: data.creative },
+    ];
+
+    entries.sort((a, b) => b.value - a.value);
+    return `“ 여백님은 ${entries[0].label} 사고 스타일입니다 ”`;
+}
+
+function mapGenreToBackend(genre: string) {
+    const map: Record<string, string> = {
+        "로맨스": "ROMANCE",
+        "스릴러": "THRILLER",
+        "판타지": "FANTASY",
+        "SF": "SF",
+        "미스터리": "MYSTERY",
+        "성장소설": "COMING_OF_AGE",
+        "역사소설": "HISTORICAL_FICTION",
+        "휴먼드라마": "HUMAN_DRAMA",
+        "에세이": "ESSAY",
+        "인문": "HUMANITIES",
+        "사회": "SOCIAL",
+        "철학": "PHILOSOPHY",
+        "심리": "PSYCHOLOGY",
+        "자기계발": "SELF_DEVELOPMENT",
+        "경제 경영": "BUSINESS",
+        "과학": "SCIENCE",
+    };
+    return map[genre] ?? genre;
+}
+
+function emotionLabelToEmoji(label: string) {
+    const map: Record<string, string> = {
+        "1": "😁",
+        "2": "😭",
+        "3": "😶",
+        HAPPY: "😁",
+        SAD: "😭",
+        NEUTRAL: "😶",
+    };
+    return map[label] ?? "🙂";
+}
+
 export default function ReadingPreferenceScreen() {
     const router = useRouter();
 
-    // ✅ 전체기간 모드 지원
     const [year, setYear] = useState<number | null>(null);
     const [month, setMonth] = useState<number | null>(null);
     const [genre, setGenre] = useState<string>("로맨스");
@@ -324,6 +348,11 @@ export default function ReadingPreferenceScreen() {
         "과학",
     ]);
 
+    const [thinkingStyle, setThinkingStyle] = useState<ThinkingStyleApi | null>(null);
+    const [lineData, setLineData] = useState<LinePoint[]>([]);
+    const [pieData, setPieData] = useState<PieSlice[]>([]);
+    const [loading, setLoading] = useState(false);
+
     useEffect(() => {
         (async () => {
             const raw = await AsyncStorage.getItem(PREF_GENRES_KEY);
@@ -338,11 +367,69 @@ export default function ReadingPreferenceScreen() {
         })();
     }, []);
 
-    // TODO: 백엔드로 교체 예정
-    const thinkingStyleText = useMemo(() => `“ 여백님은 사색형 사고 스타일입니다 ”`, []);
+    useEffect(() => {
+        const loadAnalytics = async () => {
+            try {
+                setLoading(true);
 
-    const lineData = useMemo(() => makeDummyLineData(year, month), [year, month]);
-    const pieData = useMemo(() => makeDummyPieData(genre), [genre]);
+                const [thinkingRes, activityRes, emotionGenreRes] = await Promise.all([
+                    getThinkingStyleStats(year, month),
+                    getActivityStats(year, month),
+                    getEmotionGenreStats({
+                        mode: "GENRE_TO_EMOTION",
+                        genre: mapGenreToBackend(genre),
+                        year,
+                        month,
+                    }),
+                ]);
+
+                setThinkingStyle(thinkingRes.data);
+
+                const mappedLine: LinePoint[] = activityRes.data
+                    .filter((item) => [0, 4, 8, 12, 16, 20, 23].includes(item.hour))
+                    .map((item) => ({
+                        hour: item.hour,
+                        xLabel: item.hour === 23 ? "24시" : `${String(item.hour).padStart(2, "0")}시`,
+                        value: Math.round(item.participationScore),
+                    }));
+
+                const fixedHours = [0, 4, 8, 12, 16, 20, 23];
+                const normalizedLine: LinePoint[] = fixedHours.map((hour) => {
+                    const found = mappedLine.find((v) => v.hour === hour);
+                    return (
+                        found || {
+                            hour,
+                            xLabel: hour === 23 ? "24시" : `${String(hour).padStart(2, "0")}시`,
+                            value: 0,
+                        }
+                    );
+                });
+
+                setLineData(normalizedLine);
+
+                const colors = ["#6C7BFF", "#6FCF97", "#F2C94C", "#F2994A", "#BB6BD9", "#56CCF2"];
+
+                const mappedPie: PieSlice[] = (emotionGenreRes.data.slices || []).map((slice, idx) => ({
+                    key: String(slice.label),
+                    emoji: emotionLabelToEmoji(String(slice.label)),
+                    value: Number(slice.value),
+                    color: colors[idx % colors.length],
+                }));
+
+                setPieData(mappedPie);
+            } catch (error) {
+                const message =
+                    error instanceof Error ? error.message : "분석 데이터를 불러오지 못했습니다.";
+                Alert.alert("불러오기 실패", message);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadAnalytics();
+    }, [year, month, genre]);
+
+    const thinkingStyleText = useMemo(() => getThinkingStyleLabel(thinkingStyle), [thinkingStyle]);
 
     const yearLabel = year ? `${year} 년` : "전체";
     const monthLabel = month ? `${String(month).padStart(2, "0")} 월` : "전체";
@@ -370,10 +457,24 @@ export default function ReadingPreferenceScreen() {
                     </View>
 
                     <Text style={styles.sectionBracket}>[ 사고 스타일 ]</Text>
-                    <Text style={styles.thinkingStyle}>{thinkingStyleText}</Text>
+                    <Text style={styles.thinkingStyle}>{loading ? "불러오는 중..." : thinkingStyleText}</Text>
 
                     <Text style={[styles.sectionBracket, { marginTop: 26 }]}>[ 채팅 시간대 - 채팅 참여도 ]</Text>
-                    <LineChart data={lineData} />
+                    <LineChart
+                        data={
+                            lineData.length > 0
+                                ? lineData
+                                : [
+                                    { hour: 0, xLabel: "00시", value: 0 },
+                                    { hour: 4, xLabel: "04시", value: 0 },
+                                    { hour: 8, xLabel: "08시", value: 0 },
+                                    { hour: 12, xLabel: "12시", value: 0 },
+                                    { hour: 16, xLabel: "16시", value: 0 },
+                                    { hour: 20, xLabel: "20시", value: 0 },
+                                    { hour: 23, xLabel: "24시", value: 0 },
+                                ]
+                        }
+                    />
 
                     <Text style={[styles.sectionBracket, { marginTop: 28 }]}>[ 책 장르에 따른 감정 ]</Text>
 
@@ -382,11 +483,16 @@ export default function ReadingPreferenceScreen() {
                     </View>
 
                     <View style={{ marginTop: 12 }}>
-                        <PieChart slices={pieData} />
+                        <PieChart
+                            slices={
+                                pieData.length > 0
+                                    ? pieData
+                                    : [{ key: "EMPTY", emoji: "🙂", value: 1, color: "#D9D9D9" }]
+                            }
+                        />
                     </View>
                 </ScrollView>
 
-                {/* Year */}
                 <OptionModal<number | null>
                     visible={yearOpen}
                     title="연도 선택"
@@ -399,7 +505,6 @@ export default function ReadingPreferenceScreen() {
                     }}
                 />
 
-                {/* Month */}
                 <OptionModal<number | null>
                     visible={monthOpen}
                     title="월 선택"
@@ -409,7 +514,6 @@ export default function ReadingPreferenceScreen() {
                     onSelect={(v) => setMonth(v)}
                 />
 
-                {/* Genre */}
                 <OptionModal<string>
                     visible={genreOpen}
                     title="장르 선택"

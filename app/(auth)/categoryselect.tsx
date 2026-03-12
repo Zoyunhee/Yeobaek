@@ -15,13 +15,12 @@ import { Stack, useRouter } from "expo-router";
 import AppButton from "@/components/ui/AppButton";
 import { COLORS } from "@/constants/colors";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { savePreferences } from "@/services/api";
 
 type ChipValue = string;
 
 const SIGNUP_PENDING_KEY = "signup_pending_pref_v1";
 const PREF_DONE_KEY = "pref_done_v1";
-
-// ✅ Profile에서 읽을 취향 저장 키
 const PREF_GENRES_KEY = "pref_genres_v1";
 const PREF_STYLES_KEY = "pref_styles_v1";
 
@@ -52,12 +51,38 @@ const STEP2_STYLES: ChipValue[] = [
     "천천히 곱씹는",
     "술술 읽히는",
     "한 권에 몰입",
-    "여러 권을 동시에",
     "문장 하나에 몰입",
     "짧은 글 위주",
 ];
 
-// iOS용 간단 토스트(안드로이드 ToastAndroid)
+const GENRE_MAP: Record<string, string> = {
+    로맨스: "ROMANCE",
+    스릴러: "THRILLER",
+    판타지: "FANTASY",
+    SF: "SF",
+    미스터리: "MYSTERY",
+    성장소설: "COMING_OF_AGE",
+    역사소설: "HISTORICAL_FICTION",
+    휴먼드라마: "HUMAN_DRAMA",
+    에세이: "ESSAY",
+    인문: "HUMANITIES",
+    사회: "SOCIAL",
+    철학: "PHILOSOPHY",
+    심리: "PSYCHOLOGY",
+    자기계발: "SELF_DEVELOPMENT",
+    "경제 경영": "BUSINESS",
+    과학: "SCIENCE",
+};
+
+const READING_STYLE_MAP: Record<string, string> = {
+    "가볍게 읽는": "LIGHT_READ",
+    "천천히 곱씹는": "SLOW_READ",
+    "술술 읽히는": "EASY_READ",
+    "한 권에 몰입": "DEEP_FOCUS_BOOK",
+    "문장 하나에 몰입": "DEEP_FOCUS_SENTENCE",
+    "짧은 글 위주": "SHORT_CONTENT",
+};
+
 function useSimpleToast() {
     const [msg, setMsg] = useState<string | null>(null);
     const y = useRef(new Animated.Value(20)).current;
@@ -96,7 +121,6 @@ function useSimpleToast() {
     return { show, Toast };
 }
 
-// shake 애니메이션
 function runShake(x: Animated.Value) {
     x.setValue(0);
     Animated.sequence([
@@ -110,7 +134,6 @@ function runShake(x: Animated.Value) {
     ]).start();
 }
 
-// 칩(선택 bounce + 외부 shake)
 function Chip({
                   label,
                   selected,
@@ -157,7 +180,6 @@ export default function Preferences() {
     const [genres, setGenres] = useState<ChipValue[]>([]);
     const [readingStyles, setReadingStyles] = useState<ChipValue[]>([]);
 
-    // 칩별 shake 값 저장 (라벨 -> Animated.Value)
     const shakeMapRef = useRef<Record<string, Animated.Value>>({}).current;
 
     const getShakeX = (key: string) => {
@@ -207,16 +229,28 @@ export default function Preferences() {
             return;
         }
 
-        // ✅ 취향 선택 결과 저장 (Profile에서 읽어올 것)
-        await AsyncStorage.setItem(PREF_GENRES_KEY, JSON.stringify(genres));
-        await AsyncStorage.setItem(PREF_STYLES_KEY, JSON.stringify(readingStyles));
+        try {
+            const mappedGenres = genres.map((g) => GENRE_MAP[g]).filter(Boolean);
+            const mappedReadingStyles = readingStyles
+                .map((s) => READING_STYLE_MAP[s])
+                .filter(Boolean);
 
-        // 취향 설정 완료
-        await AsyncStorage.setItem(PREF_DONE_KEY, "true");
-        // 회원가입 후 첫 로그인 상태 종료
-        await AsyncStorage.removeItem(SIGNUP_PENDING_KEY);
+            await savePreferences({
+                genres: mappedGenres,
+                readingStyles: mappedReadingStyles,
+            });
 
-        router.replace("/(tabs)");
+            await AsyncStorage.setItem(PREF_GENRES_KEY, JSON.stringify(genres));
+            await AsyncStorage.setItem(PREF_STYLES_KEY, JSON.stringify(readingStyles));
+            await AsyncStorage.setItem(PREF_DONE_KEY, "true");
+            await AsyncStorage.removeItem(SIGNUP_PENDING_KEY);
+
+            router.replace("/(tabs)");
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "취향 저장에 실패했습니다.";
+            toast.show(message);
+        }
     };
 
     return (
@@ -228,7 +262,6 @@ export default function Preferences() {
                     <Text style={styles.logo}>여백 餘白</Text>
                     <Text style={styles.subtitle}>당신의 독서 취향을 알려주세요</Text>
 
-                    {/* 장르 선택 */}
                     <View style={styles.sectionHeaderRow}>
                         <View style={styles.line} />
                         <Text style={styles.sectionTitle}>장르 선택</Text>
@@ -256,7 +289,6 @@ export default function Preferences() {
                         {genres.length}/{STEP1_MAX} 선택
                     </Text>
 
-                    {/* 읽는 방식 */}
                     <View style={[styles.sectionHeaderRow, { marginTop: 20 }]}>
                         <View style={styles.line} />
                         <Text style={styles.sectionTitle}>읽는 방식 선택</Text>
@@ -306,7 +338,6 @@ const styles = StyleSheet.create({
         paddingTop: 40,
         paddingBottom: 30,
     },
-
     logo: {
         fontSize: 42,
         fontWeight: "900",
@@ -321,7 +352,6 @@ const styles = StyleSheet.create({
         textAlign: "center",
         marginBottom: 18,
     },
-
     sectionHeaderRow: {
         flexDirection: "row",
         alignItems: "center",
@@ -339,7 +369,6 @@ const styles = StyleSheet.create({
         fontWeight: "800",
         color: COLORS.primary,
     },
-
     stepTitle: {
         fontSize: 13,
         fontWeight: "800",
@@ -355,7 +384,6 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         color: COLORS.mint,
     },
-
     chipWrap: {
         marginTop: 14,
         flexDirection: "row",
@@ -384,18 +412,15 @@ const styles = StyleSheet.create({
     chipTextSelected: {
         color: COLORS.primaryDark,
     },
-
     countText: {
         marginTop: 10,
         fontSize: 11,
         color: COLORS.muted,
         fontWeight: "700",
     },
-
     button: {
         marginTop: 24,
     },
-
     toast: {
         position: "absolute",
         left: 28,

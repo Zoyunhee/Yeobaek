@@ -19,14 +19,15 @@ import AppButton from "@/components/ui/AppButton";
 import { COLORS } from "@/constants/colors";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { join, sendEmailCode, verifyEmailCode } from "@/services/api";
 
 const SIGNUP_PENDING_KEY = "signup_pending_pref_v1";
 const PREF_DONE_KEY = "pref_done_v1";
 
-/** 인증코드 오류 다이알로그(간단 Modal) */
+/** 인증/오류 다이알로그 */
 function ErrorDialog({
                          visible,
-                         title = "Error!",
+                         title = "알림",
                          message,
                          onClose,
                      }: {
@@ -51,7 +52,7 @@ function ErrorDialog({
     );
 }
 
-/** secondary 컬러 버튼 (인증코드 전송/확인) */
+/** secondary 컬러 버튼 */
 function SecondaryButton({
                              title,
                              onPress,
@@ -82,54 +83,135 @@ export default function Join() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [password2, setPassword2] = useState("");
+    const [name, setName] = useState("");
     const [nickname, setNickname] = useState("");
 
     // 이메일 본인인증
     const [email, setEmail] = useState("");
     const [code, setCode] = useState("");
-    const [serverCode, setServerCode] = useState<string | null>(null);
     const [emailVerified, setEmailVerified] = useState(false);
 
-    // 오류 다이알로그
+    // 다이알로그
     const [errorVisible, setErrorVisible] = useState(false);
-    const [errorMessage, setErrorMessage] = useState("인증코드가 틀렸습니다. 다시 입력하십시오");
+    const [errorTitle, setErrorTitle] = useState("알림");
+    const [errorMessage, setErrorMessage] = useState("");
 
     const pwRef = useRef<TextInput>(null);
     const pw2Ref = useRef<TextInput>(null);
+    const nameRef = useRef<TextInput>(null);
     const nickRef = useRef<TextInput>(null);
     const emailRef = useRef<TextInput>(null);
     const codeRef = useRef<TextInput>(null);
 
+    const openDialog = (message: string, title = "알림") => {
+        setErrorTitle(title);
+        setErrorMessage(message);
+        setErrorVisible(true);
+    };
+
     const createAccount = async () => {
-        // TODO: 실제 회원가입/검증 로직 연결
+        try {
+            if (!username.trim()) {
+                openDialog("아이디를 입력해주세요.");
+                return;
+            }
 
-        // 회원가입 완료 플래그 저장 (첫 로그인 때 preferences 띄우기 용)
-        await AsyncStorage.setItem(SIGNUP_PENDING_KEY, "true");
-        // 테스트/재가입 등 상황에서 남아있을 수 있어서 초기화(선택)
-        await AsyncStorage.removeItem(PREF_DONE_KEY);
+            if (!password.trim()) {
+                openDialog("비밀번호를 입력해주세요.");
+                return;
+            }
 
-        router.replace("/(auth)/login");
-    };
+            if (!password2.trim()) {
+                openDialog("비밀번호 확인을 입력해주세요.");
+                return;
+            }
 
-    const sendVerificationCode = () => {
-        // TODO: 서버 API 연동
-        // 데모용 6자리 코드 생성
-        const generated = String(Math.floor(100000 + Math.random() * 900000));
-        setServerCode(generated);
-        setEmailVerified(false);
-        setCode("");
-    };
+            if (password !== password2) {
+                openDialog("비밀번호가 일치하지 않습니다.");
+                return;
+            }
 
-    const verifyCode = () => {
-        if (!serverCode) return;
+            if (!name.trim()) {
+                openDialog("이름을 입력해주세요.");
+                return;
+            }
 
-        const ok = code.trim() === serverCode;
-        if (!ok) {
-            setErrorMessage("인증코드가 틀렸습니다. 다시 입력하십시오");
-            setErrorVisible(true);
-            return;
+            if (!nickname.trim()) {
+                openDialog("닉네임을 입력해주세요.");
+                return;
+            }
+
+            if (!email.trim()) {
+                openDialog("이메일을 입력해주세요.");
+                return;
+            }
+
+            if (!emailVerified) {
+                openDialog("이메일 인증을 완료해주세요.");
+                return;
+            }
+
+            await join({
+                userId: username.trim(),
+                password,
+                passwordConfirm: password2,
+                name: name.trim(),
+                nickname: nickname.trim(),
+                email: email.trim(),
+            });
+
+            await AsyncStorage.setItem(SIGNUP_PENDING_KEY, "true");
+            await AsyncStorage.removeItem(PREF_DONE_KEY);
+
+            openDialog("회원가입이 완료되었습니다.", "성공");
+            router.replace("/(auth)/login");
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "회원가입에 실패했습니다.";
+            openDialog(message, "Error!");
         }
-        setEmailVerified(true);
+    };
+
+    const sendVerificationCode = async () => {
+        try {
+            if (!email.trim()) {
+                openDialog("이메일을 입력해주세요.", "Error!");
+                return;
+            }
+
+            await sendEmailCode(email.trim());
+            setEmailVerified(false);
+            setCode("");
+
+            openDialog("인증코드를 전송했습니다. 이메일을 확인해주세요.");
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "인증코드 전송에 실패했습니다.";
+            openDialog(message, "Error!");
+        }
+    };
+
+    const verifyCode = async () => {
+        try {
+            if (!email.trim()) {
+                openDialog("이메일을 먼저 입력해주세요.", "Error!");
+                return;
+            }
+
+            if (!code.trim()) {
+                openDialog("인증코드를 입력해주세요.", "Error!");
+                return;
+            }
+
+            await verifyEmailCode(email.trim(), code.trim());
+            setEmailVerified(true);
+
+            openDialog("이메일 인증이 완료되었습니다.");
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "인증코드 확인에 실패했습니다.";
+            openDialog(message, "Error!");
+        }
     };
 
     return (
@@ -137,7 +219,6 @@ export default function Join() {
             <Stack.Screen options={{ headerShown: false }} />
 
             <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
-                {/* Header */}
                 <View style={styles.header}>
                     <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
                         <Ionicons name="chevron-back" size={24} color={COLORS.text} />
@@ -183,6 +264,17 @@ export default function Join() {
                             onChangeText={setPassword2}
                             secureTextEntry
                             returnKeyType="next"
+                            onSubmitEditing={() => nameRef.current?.focus()}
+                            style={styles.input}
+                        />
+
+                        <Text style={styles.label}>이름 *</Text>
+                        <AppInput
+                            ref={nameRef}
+                            placeholder="이름 입력"
+                            value={name}
+                            onChangeText={setName}
+                            returnKeyType="next"
                             onSubmitEditing={() => nickRef.current?.focus()}
                             style={styles.input}
                         />
@@ -198,7 +290,6 @@ export default function Join() {
                             style={styles.input}
                         />
 
-                        {/* 이메일 본인인증 */}
                         <Text style={styles.label}>이메일 본인 인증 *</Text>
                         <AppInput
                             ref={emailRef}
@@ -216,7 +307,11 @@ export default function Join() {
                             style={styles.input}
                         />
 
-                        <SecondaryButton title="인증코드 전송하기" onPress={sendVerificationCode} disabled={!email.trim()} />
+                        <SecondaryButton
+                            title="인증코드 전송하기"
+                            onPress={sendVerificationCode}
+                            disabled={!email.trim()}
+                        />
 
                         <View style={{ height: 12 }} />
 
@@ -234,7 +329,7 @@ export default function Join() {
                         <SecondaryButton
                             title={emailVerified ? "인증 완료" : "인증코드 확인하기"}
                             onPress={verifyCode}
-                            disabled={!serverCode || !code.trim() || emailVerified}
+                            disabled={!code.trim() || emailVerified}
                         />
 
                         <View style={{ height: 24 }} />
@@ -244,7 +339,12 @@ export default function Join() {
                 </KeyboardAvoidingView>
             </SafeAreaView>
 
-            <ErrorDialog visible={errorVisible} message={errorMessage} onClose={() => setErrorVisible(false)} />
+            <ErrorDialog
+                visible={errorVisible}
+                title={errorTitle}
+                message={errorMessage}
+                onClose={() => setErrorVisible(false)}
+            />
         </>
     );
 }

@@ -6,28 +6,20 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import Svg, { Path, Circle, Rect, Line, Text as SvgText } from "react-native-svg";
-
-// ✅ added: 설정 저장 후 돌아오면 즉시 반영
 import { useFocusEffect } from "@react-navigation/native";
+import {
+    getMyProfile,
+    getWishlist,
+    getReadingNotes,
+    getReadCompletions,
+} from "@/services/api";
 
 type Book = { id: string; title: string; author: string; createdAt?: string; coverUrl?: string };
 type CompletedChat = { id: string; createdAt?: string; coverUrl?: string };
 type Note = { id: string; createdAt?: string; coverUrl?: string };
 type ChatEvent = { id: string; createdAt: string };
 
-const PREF_GENRES_KEY = "pref_genres_v1";
-const PREF_STYLES_KEY = "pref_styles_v1";
-
-const LIKED_BOOKS_KEY = "liked_books_v1";
-const COMPLETED_CHATS_KEY = "completed_chats_v1";
-const NOTES_KEY = "reading_notes_v1";
-
-// 이번 달 대화 이벤트 로그(추천 방식)
 const MONTHLY_CHAT_EVENTS_KEY = "monthly_chat_events_v1";
-
-// ✅ added: 닉네임/프로필 사진 저장 키 (설정 화면들과 동일해야 함)
-const PROFILE_NICKNAME_KEY = "profile_nickname_v1";
-const PROFILE_AVATAR_URI_KEY = "profile_avatar_uri_v1";
 
 const DEFAULT_AVATAR = require("../../assets/images/default-avatar.png");
 const BOOK_COVER = require("../../assets/images/book-cover.png");
@@ -53,20 +45,51 @@ function pickLatest<T extends { createdAt?: string }>(arr: T[]) {
     return [...withDate].sort((a, b) => +new Date(b.createdAt!) - +new Date(a.createdAt!))[0];
 }
 
-/** ✅ 프리뷰용 더미 (백엔드 붙이면 여기만 교체하면 됨) */
 function makePreviewLine() {
-    // 00, 04, 08, 12, 16, 20, 24
     return [8, 6, 7, 10, 15, 14, 11];
 }
+
 function makePreviewEmotions() {
-    // HAPPY, SAD, NEUTRAL
     return { happy: 60, sad: 30, neutral: 10 };
+}
+
+function mapGenreToKorean(genre: string) {
+    const map: Record<string, string> = {
+        ROMANCE: "로맨스",
+        THRILLER: "스릴러",
+        FANTASY: "판타지",
+        SF: "SF",
+        MYSTERY: "미스터리",
+        COMING_OF_AGE: "성장소설",
+        HISTORICAL_FICTION: "역사소설",
+        HUMAN_DRAMA: "휴먼드라마",
+        ESSAY: "에세이",
+        HUMANITIES: "인문",
+        SOCIAL: "사회",
+        PHILOSOPHY: "철학",
+        PSYCHOLOGY: "심리",
+        SELF_DEVELOPMENT: "자기계발",
+        BUSINESS: "경제 경영",
+        SCIENCE: "과학",
+    };
+    return map[genre] ?? genre;
+}
+
+function mapReadingStyleToKorean(style: string) {
+    const map: Record<string, string> = {
+        LIGHT_READ: "가볍게 읽는",
+        SLOW_READ: "천천히 곱씹는",
+        EASY_READ: "술술 읽히는",
+        DEEP_FOCUS_BOOK: "한 권에 몰입",
+        DEEP_FOCUS_SENTENCE: "문장 하나에 몰입",
+        SHORT_CONTENT: "짧은 글 위주",
+    };
+    return map[style] ?? style;
 }
 
 export default function ProfileScreen() {
     const router = useRouter();
 
-    // ✅ added: 닉네임/아바타 상태
     const [nickname, setNickname] = useState("은석");
     const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
@@ -79,57 +102,65 @@ export default function ProfileScreen() {
     const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
 
     const load = useCallback(async () => {
-        // ✅ changed: 닉네임/아바타도 같이 로드
-        const [nickRaw, avatarRaw, gRaw, sRaw, bRaw, cRaw, nRaw, eRaw] = await Promise.all([
-            AsyncStorage.getItem(PROFILE_NICKNAME_KEY),
-            AsyncStorage.getItem(PROFILE_AVATAR_URI_KEY),
+        try {
+            const userIdRaw = await AsyncStorage.getItem("auth_user_id");
 
-            AsyncStorage.getItem(PREF_GENRES_KEY),
-            AsyncStorage.getItem(PREF_STYLES_KEY),
-            AsyncStorage.getItem(LIKED_BOOKS_KEY),
-            AsyncStorage.getItem(COMPLETED_CHATS_KEY),
-            AsyncStorage.getItem(NOTES_KEY),
-            AsyncStorage.getItem(MONTHLY_CHAT_EVENTS_KEY),
-        ]);
+            if (!userIdRaw) {
+                return;
+            }
 
-        // ✅ added: nickname/avatar 적용
-        setNickname(nickRaw && nickRaw.trim().length > 0 ? nickRaw : "은석");
-        setAvatarUri(avatarRaw && avatarRaw.trim().length > 0 ? avatarRaw : null);
+            const userId = Number(userIdRaw);
 
-        // hashtags
-        try {
-            setGenres(gRaw ? (JSON.parse(gRaw) as string[]) : []);
-        } catch {
-            setGenres([]);
-        }
-        try {
-            setStylesPref(sRaw ? (JSON.parse(sRaw) as string[]) : []);
-        } catch {
-            setStylesPref([]);
-        }
+            const [profileRes, wishlistRes, notesRes, completionsRes, eventRaw] = await Promise.all([
+                getMyProfile(userId),
+                getWishlist(userId),
+                getReadingNotes(userId),
+                getReadCompletions(userId),
+                AsyncStorage.getItem(MONTHLY_CHAT_EVENTS_KEY),
+            ]);
 
-        // counts
-        try {
-            setLikedBooks(bRaw ? (JSON.parse(bRaw) as Book[]) : []);
-        } catch {
-            setLikedBooks([]);
-        }
-        try {
-            setCompletedChats(cRaw ? (JSON.parse(cRaw) as CompletedChat[]) : []);
-        } catch {
-            setCompletedChats([]);
-        }
-        try {
-            setNotes(nRaw ? (JSON.parse(nRaw) as Note[]) : []);
-        } catch {
-            setNotes([]);
-        }
+            const profile = profileRes.data;
 
-        // monthly events (preferred)
-        try {
-            setChatEvents(eRaw ? (JSON.parse(eRaw) as ChatEvent[]) : []);
-        } catch {
-            setChatEvents([]);
+            setNickname(profile.nickname || "은석");
+            setAvatarUri(profile.profileImage || null);
+            setGenres((profile.genres || []).map(mapGenreToKorean));
+            setStylesPref((profile.readingStyles || []).map(mapReadingStyleToKorean));
+
+            setLikedBooks(
+                (wishlistRes.data || []).map((item) => ({
+                    id: String(item.id),
+                    title: item.bookTitle,
+                    author: item.author || "",
+                    createdAt: item.createdAt,
+                    coverUrl: item.coverImage,
+                }))
+            );
+
+            setNotes(
+                (notesRes.data || []).map((item) => ({
+                    id: String(item.id),
+                    createdAt: item.createdAt,
+                    coverUrl: item.coverImage,
+                }))
+            );
+
+            setCompletedChats(
+                (completionsRes.data || []).map((item) => ({
+                    id: String(item.id),
+                    createdAt: item.completedAt,
+                    coverUrl: item.bookCover,
+                }))
+            );
+
+            try {
+                setChatEvents(eventRaw ? (JSON.parse(eventRaw) as ChatEvent[]) : []);
+            } catch {
+                setChatEvents([]);
+            }
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "마이페이지 불러오기에 실패했습니다.";
+            Alert.alert("불러오기 실패", message);
         }
     }, []);
 
@@ -137,7 +168,6 @@ export default function ProfileScreen() {
         load();
     }, [load]);
 
-    // ✅ added: 설정 저장 후 back 하면 즉시 반영(닉네임/사진)
     useFocusEffect(
         useCallback(() => {
             load();
@@ -145,26 +175,35 @@ export default function ProfileScreen() {
         }, [load])
     );
 
-    // counts
     const likedCount = likedBooks.length;
     const completedCount = completedChats.length;
     const noteCount = notes.length;
 
-    // 이번 달 대화 횟수: events 우선, 없으면 completedChats의 createdAt로 fallback
     const monthlyChatCount = useMemo(() => {
         if (chatEvents.length > 0) {
             return chatEvents.filter((e) => isInThisMonth(e.createdAt)).length;
         }
-        const fallback = completedChats.filter((c) => isInThisMonth(c.createdAt)).length;
-        return fallback;
+        return completedChats.filter((c) => isInThisMonth(c.createdAt)).length;
     }, [chatEvents, completedChats]);
 
-    // latest preview (지금은 백엔드 없으니 coverUrl 있어도 일단 BOOK_COVER로 표시)
-    const likedPreview = useMemo(() => (pickLatest(likedBooks) ? BOOK_COVER : null), [likedBooks]);
-    const completedPreview = useMemo(() => (pickLatest(completedChats) ? BOOK_COVER : null), [completedChats]);
-    const notePreview = useMemo(() => (pickLatest(notes) ? BOOK_COVER : null), [notes]);
+    const likedPreview = useMemo(() => {
+        const latest = pickLatest(likedBooks);
+        if (!latest) return null;
+        return latest.coverUrl ? { uri: latest.coverUrl } : BOOK_COVER;
+    }, [likedBooks]);
 
-    // ✅ 독서 성향 프리뷰용 더미 (백엔드 붙이면 여기만 교체)
+    const completedPreview = useMemo(() => {
+        const latest = pickLatest(completedChats);
+        if (!latest) return null;
+        return latest.coverUrl ? { uri: latest.coverUrl } : BOOK_COVER;
+    }, [completedChats]);
+
+    const notePreview = useMemo(() => {
+        const latest = pickLatest(notes);
+        if (!latest) return null;
+        return latest.coverUrl ? { uri: latest.coverUrl } : BOOK_COVER;
+    }, [notes]);
+
     const thinkingStyle = "사색형";
     const weeklyChats = 0;
     const emotions = useMemo(() => makePreviewEmotions(), []);
@@ -172,35 +211,27 @@ export default function ProfileScreen() {
 
     return (
         <SafeAreaView style={styles.safe}>
-            {/* 상단 헤더(피그마처럼) */}
             <View style={styles.topHeader}>
                 <Pressable onPress={() => router.replace("/(tabs)")} hitSlop={12} style={styles.headerIconBtn}>
                     <IconSymbol name="chevron.left" size={20} color={COLORS.primary} />
                 </Pressable>
                 <View style={{ flex: 1 }} />
-
-                {/* ... 설정 누르면 설정 허브로 이동 */}
                 <Pressable onPress={() => router.push("/(profile)/settings")} hitSlop={12} style={styles.headerIconBtn}>
                     <IconSymbol name="ellipsis" size={20} color={COLORS.primary} />
                 </Pressable>
             </View>
 
             <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-                {/* 프로필 */}
                 <View style={styles.profileRow}>
-
-                    <Image source={avatarUri ? ({ uri: avatarUri } as any) : DEFAULT_AVATAR} style={styles.avatar} />
+                    <Image source={avatarUri ? { uri: avatarUri } : DEFAULT_AVATAR} style={styles.avatar} />
 
                     <View style={{ flex: 1 }}>
-
                         <Text style={styles.name}>{nickname}</Text>
 
                         <View style={{ marginTop: 6 }}>
-                            {/* 윗줄: 장르 */}
                             <Text style={styles.hash} numberOfLines={1}>
                                 {genres.length > 0 ? genres.map((g) => `#${g}`).join(" ") : "#장르를 선택해 주세요"}
                             </Text>
-                            {/* 아랫줄: 읽는 방식 */}
                             <Text style={[styles.hash, { marginTop: 2 }]} numberOfLines={1}>
                                 {stylesPref.length > 0 ? stylesPref.map((s) => `#${s}`).join(" ") : "#읽는 방식을 선택해 주세요"}
                             </Text>
@@ -210,7 +241,6 @@ export default function ProfileScreen() {
                     </View>
                 </View>
 
-                {/* 나의 서재 */}
                 <Pressable
                     onPress={() => router.push("/(profile)/library")}
                     style={({ pressed }) => [styles.card, pressed && { opacity: 0.92 }]}
@@ -225,7 +255,6 @@ export default function ProfileScreen() {
                     </View>
                 </Pressable>
 
-                {/*  나의 독서 성향 (프리뷰 카드) */}
                 <Pressable
                     onPress={() => router.push("/(profile)/reading-preference")}
                     style={({ pressed }) => [styles.card, pressed && { opacity: 0.92 }]}
@@ -243,7 +272,6 @@ export default function ProfileScreen() {
                         <BulletRow title="사고 스타일" value={thinkingStyle} />
                         <BulletRow title="최근 감정 Top1" value="😁" />
 
-                        {/* 감정 비율을 Top1 바로 아래 */}
                         <View style={previewStyles.emojiRow}>
                             <Text style={previewStyles.emojiItem}>😁 {emotions.happy}%</Text>
                             <Text style={previewStyles.emojiItem}>😭 {emotions.sad}%</Text>
@@ -282,7 +310,6 @@ function StatBlock({
             <Text style={styles.statLabel}>{label}</Text>
             <Text style={styles.statValue}>{value}</Text>
 
-            {/* 각 칸 아래에 표지 1개 */}
             {previewCover ? <Image source={previewCover} style={styles.statCover} /> : <View style={styles.statCover} />}
         </View>
     );
@@ -299,7 +326,6 @@ function BulletRow({ title, value }: { title: string; value: string }) {
     );
 }
 
-/**  아주 작은 라인차트 (프리뷰 전용) */
 function MiniLineChart({ values }: { values: number[] }) {
     const W = 320;
     const H = 88;
@@ -329,15 +355,12 @@ function MiniLineChart({ values }: { values: number[] }) {
         <View style={previewStyles.miniChartWrap}>
             <Svg width={W} height={H}>
                 <Rect x={0} y={0} width={W} height={H} rx={12} ry={12} fill={COLORS.white} />
-                {/* 가이드 라인 */}
                 <Line x1={padL} x2={W - padR} y1={padT + plotH * 0.5} y2={padT + plotH * 0.5} stroke="#E9E9E9" strokeWidth={1} />
-                {/* 라인 */}
                 <Path d={d} fill="none" stroke="#6C7BFF" strokeWidth={2.5} />
                 {pts.map((p, i) => (
                     <Circle key={i} cx={p.x} cy={p.y} r={3.6} fill="#6C7BFF" />
                 ))}
 
-                {/* x축 라벨(짧게) */}
                 {["00", "04", "08", "12", "16", "20", "24"].map((t, i) => {
                     const x = padL + i * step;
                     const isLast = i === 6;
