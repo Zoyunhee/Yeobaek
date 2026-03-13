@@ -1,228 +1,175 @@
-// app/(tabs)/chat/index.tsx
-// 변경 사항:
-//   - AI 채팅방 목록: 로컬 store 대신 getAiRooms() API 호출
-//   - 화면 포커스될 때마다 목록 새로고침 (useFocusEffect)
-//   - 그룹 채팅방은 기존 store 유지 (그룹 API는 별도)
-
 import React, { useCallback, useState } from "react";
 import {
-    ActivityIndicator,
+    View,
+    Text,
     FlatList,
     Pressable,
-    Text,
-    View,
+    ActivityIndicator,
+    StyleSheet,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import { COLORS } from "@/constants/colors";
-import SegmentedToggle from "@/components/ui/SegmentedToggle";
-import ChatListItem from "@/components/ui/ChatListItem";
-import { useChatStore } from "@/src/chat/store";
-import type { GroupRoom } from "@/src/chat/types";
-import { type AiRoomSummary, getAiRooms } from "@/services/api";
+import { getDiscussionRooms, DiscussionRoom } from "@/services/api";
 
-type ChatMode = "AI" | "GROUP";
-
-const formatTime = (iso?: string) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    return `${String(d.getHours()).padStart(2, "0")}:${String(
-        d.getMinutes()
-    ).padStart(2, "0")}`;
-};
-
-const formatDateTime = (iso?: string) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleString();
-};
-
-export default function ChatMainScreen() {
+export default function ChatIndexScreen() {
     const router = useRouter();
-    const [mode, setMode] = useState<ChatMode>("AI");
 
-    // ── AI 채팅방 목록 (서버) ──
-    const [aiRooms, setAiRooms] = useState<AiRoomSummary[]>([]);
-    const [isLoadingAi, setIsLoadingAi] = useState(false);
+    const [rooms, setRooms] = useState<DiscussionRoom[]>([]);
+    const [loading, setLoading] = useState(true);
 
-    // ── 그룹 채팅방 (기존 store 유지) ──
-    const { groupRooms } = useChatStore();
-    const visibleGroupRooms = groupRooms.filter((r) => r.status !== "ENDED");
+    const loadRooms = useCallback(async () => {
+        try {
+            setLoading(true);
+            const res = await getDiscussionRooms();
 
-    // 화면 포커스될 때마다 AI 목록 새로고침
+            if (res.success) {
+                setRooms((res.data ?? []).filter((room) => room.status !== "FINISHED"));
+            } else {
+                setRooms([]);
+            }
+        } catch (error) {
+            console.error("그룹채팅 목록 조회 실패:", error);
+            setRooms([]);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
     useFocusEffect(
         useCallback(() => {
-            if (mode !== "AI") return;
-
-            let cancelled = false;
-
-            (async () => {
-                setIsLoadingAi(true);
-                try {
-                    const res = await getAiRooms();
-                    if (!cancelled) {
-                        setAiRooms(res.data ?? []);
-                    }
-                } catch (e) {
-                    console.error("AI 채팅방 목록 로드 실패:", e);
-                    if (!cancelled) {
-                        setAiRooms([]);
-                    }
-                } finally {
-                    if (!cancelled) {
-                        setIsLoadingAi(false);
-                    }
-                }
-            })();
-
-            return () => {
-                cancelled = true;
-            };
-        }, [mode])
+            loadRooms();
+        }, [loadRooms])
     );
 
     return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
-            <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
-                {/* 헤더 */}
-                <View
-                    style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        marginBottom: 14,
-                    }}
+        <View style={styles.container}>
+            <View style={styles.header}>
+                <Text style={styles.title}>그룹 채팅</Text>
+
+                <Pressable
+                    style={styles.createButton}
+                    onPress={() => router.push("/(tabs)/chat/group-create")}
                 >
-                    <Text
-                        style={{ color: COLORS.primary, fontSize: 22, fontWeight: "900" }}
-                    >
-                        여백 餘白
-                    </Text>
-
-                    {mode === "AI" ? (
-                        <Pressable onPress={() => router.push("/(tabs)/chat/ai-create")}>
-                            <Ionicons name="add" size={22} color={COLORS.primary} />
-                        </Pressable>
-                    ) : (
-                        <View style={{ flexDirection: "row", gap: 14 }}>
-                            <Pressable
-                                onPress={() => router.push("/(tabs)/chat/group-search")}
-                            >
-                                <Ionicons name="search" size={20} color={COLORS.primary} />
-                            </Pressable>
-                            <Pressable
-                                onPress={() => router.push("/(tabs)/chat/group-create")}
-                            >
-                                <Ionicons name="add" size={22} color={COLORS.primary} />
-                            </Pressable>
-                        </View>
-                    )}
-                </View>
-
-                <SegmentedToggle
-                    leftLabel="AI 채팅"
-                    rightLabel="그룹 채팅"
-                    value={mode}
-                    leftValue="AI"
-                    rightValue="GROUP"
-                    onChange={(v) => setMode(v as ChatMode)}
-                />
+                    <Text style={styles.createButtonText}>방 만들기</Text>
+                </Pressable>
             </View>
 
-            {mode === "AI" && isLoadingAi ? (
-                <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-                    <ActivityIndicator size="large" color={COLORS.primary} />
-                </View>
+            {loading ? (
+                <ActivityIndicator size="large" style={{ marginTop: 40 }} />
             ) : (
                 <FlatList
-                    style={{ flex: 1 }}
-                    contentContainerStyle={{
-                        paddingHorizontal: 16,
-                        paddingTop: 10,
-                        paddingBottom: 18,
-                    }}
-                    data={mode === "AI" ? aiRooms : (visibleGroupRooms as any[])}
-                    keyExtractor={(item) =>
-                        mode === "AI"
-                            ? String((item as AiRoomSummary).roomId)
-                            : String((item as GroupRoom).id)
-                    }
+                    data={rooms}
+                    keyExtractor={(item) => String(item.id)}
+                    contentContainerStyle={{ paddingBottom: 24 }}
                     ListEmptyComponent={
-                        <View
-                            style={{
-                                alignItems: "center",
-                                marginTop: 60,
-                            }}
-                        >
-                            <Text style={{ color: COLORS.muted }}>
-                                {mode === "AI"
-                                    ? "AI 채팅방이 없습니다. + 버튼으로 시작해보세요!"
-                                    : "참여 중인 그룹 채팅이 없습니다."}
-                            </Text>
+                        <View style={styles.emptyBox}>
+                            <Text style={styles.emptyText}>아직 생성된 그룹방이 없어요.</Text>
                         </View>
                     }
-                    renderItem={({ item }) => {
-                        if (mode === "AI") {
-                            const r = item as AiRoomSummary;
+                    renderItem={({ item }) => (
+                        <Pressable
+                            style={styles.card}
+                            onPress={() =>
+                                router.push({
+                                    pathname: "/(tabs)/chat/group-detail",
+                                    params: { roomId: String(item.id) },
+                                })
+                            }
+                        >
+                            <Text style={styles.bookTitle}>{item.bookTitle}</Text>
+                            <Text style={styles.author}>{item.bookAuthor}</Text>
 
-                            return (
-                                <ChatListItem
-                                    title={r.title}
-                                    subtitle={
-                                        r.status === "IN_PROGRESS"
-                                            ? "대화를 이어가보세요"
-                                            : "완료된 대화"
-                                    }
-                                    coverUrl={r.coverUrl}
-                                    rightTopText={formatTime(r.lastMessageAt)}
-                                    rightBottomText={
-                                        r.status === "IN_PROGRESS" ? "진행중" : "완료"
-                                    }
-                                    onPress={() =>
-                                        router.push({
-                                            pathname: "/(tabs)/chat/ai-room",
-                                            params: {
-                                                roomId: String(r.roomId),
-                                                bookTitle: r.title,
-                                            },
-                                        } as any)
-                                    }
-                                />
-                            );
-                        }
+                            <Text style={styles.desc}>
+                                {item.description || "설명이 없습니다."}
+                            </Text>
 
-                        const r = item as GroupRoom;
+                            <View style={styles.metaRow}>
+                                <Text style={styles.metaText}>
+                                    인원 {item.currentParticipants}/{item.maxParticipants}
+                                </Text>
+                                <Text style={styles.metaText}>
+                                    상태 {item.status}
+                                </Text>
+                            </View>
 
-                        return (
-                            <ChatListItem
-                                title={r.bookTitle}
-                                subtitle={r.topic}
-                                coverUrl={r.coverUrl}
-                                metaDirection="row"
-                                meta={[
-                                    {
-                                        icon: "👥",
-                                        text: `${r.joinedPeople} / ${r.maxPeople} 명`,
-                                    },
-                                    {
-                                        icon: "🕒",
-                                        text: formatDateTime(r.startAt),
-                                    },
-                                ]}
-                                onPress={() =>
-                                    router.push({
-                                        pathname: "/(tabs)/chat/group-detail",
-                                        params: { roomId: r.id },
-                                    } as any)
-                                }
-                            />
-                        );
-                    }}
+                            <Text style={styles.timeText}>
+                                시작 시간: {new Date(item.discussionStartTime).toLocaleString()}
+                            </Text>
+                        </Pressable>
+                    )}
                 />
             )}
-        </SafeAreaView>
+        </View>
     );
 }
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        padding: 16,
+        backgroundColor: "#fff",
+    },
+    header: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 16,
+    },
+    title: {
+        fontSize: 24,
+        fontWeight: "700",
+    },
+    createButton: {
+        backgroundColor: "#222",
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 10,
+    },
+    createButtonText: {
+        color: "#fff",
+        fontWeight: "600",
+    },
+    card: {
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        backgroundColor: "#fafafa",
+    },
+    bookTitle: {
+        fontSize: 18,
+        fontWeight: "700",
+        marginBottom: 4,
+    },
+    author: {
+        fontSize: 14,
+        color: "#666",
+        marginBottom: 8,
+    },
+    desc: {
+        fontSize: 14,
+        color: "#333",
+        marginBottom: 10,
+    },
+    metaRow: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        marginBottom: 8,
+    },
+    metaText: {
+        fontSize: 13,
+        color: "#555",
+    },
+    timeText: {
+        fontSize: 12,
+        color: "#888",
+    },
+    emptyBox: {
+        paddingVertical: 60,
+        alignItems: "center",
+    },
+    emptyText: {
+        color: "#777",
+        fontSize: 14,
+    },
+});

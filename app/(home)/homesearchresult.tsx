@@ -1,5 +1,12 @@
-import React, { useMemo, useState } from "react";
-import { View, StyleSheet, Pressable, FlatList } from "react-native";
+import React, { useEffect, useState } from "react";
+import {
+    View,
+    StyleSheet,
+    Pressable,
+    FlatList,
+    ActivityIndicator,
+    Text,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { COLORS } from "@/constants/colors";
@@ -7,22 +14,48 @@ import SearchBar from "@/components/ui/SearchBar";
 import BookCard, { Book } from "@/components/ui/BookCard";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const dummy: Book[] = [
-    {
-        id: "1",
-        title: "어린 왕자",
-        author: "생텍쥐페리",
-        desc: "임시 설명",
-        coverUrl: "https://picsum.photos/200/300?random=21",
-    },
-];
+import { searchBooks, BookSearchItem } from "@/services/api";
+
+function toBook(item: BookSearchItem, index: number): Book {
+    return {
+        id: item.isbn ?? String(index),
+        isbn: item.isbn,
+        title: item.title,
+        author: item.authors?.join(", ") ?? "",
+        publisher: item.publisher ?? "",
+        desc: item.contents ?? "",
+        coverUrl: item.thumbnail ?? "",
+    };
+}
 
 export default function HomeSearchResultScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ q?: string }>();
     const [q, setQ] = useState(params.q ?? "");
 
-    const results = useMemo(() => dummy, []);
+    const [results, setResults] = useState<BookSearchItem[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const doSearch = async (query: string) => {
+        if (!query.trim()) return;
+        try {
+            setLoading(true);
+            setError(null);
+            const res = await searchBooks(query.trim());
+            setResults(res.items ?? []);
+        } catch (e: any) {
+            setError(e?.message ?? "검색에 실패했습니다.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (params.q) doSearch(params.q);
+    }, []);
+
+    const onSubmit = () => doSearch(q);
 
     return (
         <View style={styles.screen}>
@@ -32,29 +65,58 @@ export default function HomeSearchResultScreen() {
                         <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
                     </Pressable>
                     <View style={{ flex: 1 }}>
-                        <SearchBar value={q} onChangeText={setQ} onSubmit={() => {}} />
+                        <SearchBar
+                            value={q}
+                            onChangeText={setQ}
+                            onSubmit={onSubmit}
+                        />
                     </View>
                 </View>
             </SafeAreaView>
 
-            <FlatList
-                data={results}
-                keyExtractor={(b) => b.id}
-                contentContainerStyle={styles.list}
-                ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-                renderItem={({ item }) => (
-                    <BookCard
-                        book={item}
-                        showButtons
-                        onPress={() =>
-                            router.push({
-                                pathname: "/(home)/resultdetails",
-                                params: { id: item.id, q },
-                            })
-                        }
-                    />
-                )}
-            />
+            {loading ? (
+                <View style={styles.center}>
+                    <ActivityIndicator size="large" color={COLORS.primary} />
+                </View>
+            ) : error ? (
+                <View style={styles.center}>
+                    <Text style={styles.errorText}>{error}</Text>
+                    <Pressable style={styles.retryBtn} onPress={onSubmit}>
+                        <Text style={styles.retryText}>다시 시도</Text>
+                    </Pressable>
+                </View>
+            ) : results.length === 0 ? (
+                <View style={styles.center}>
+                    <Text style={styles.emptyText}>검색 결과가 없습니다.</Text>
+                </View>
+            ) : (
+                <FlatList
+                    data={results}
+                    keyExtractor={(b, i) => b.isbn ?? String(i)}
+                    contentContainerStyle={styles.list}
+                    ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+                    renderItem={({ item, index }) => (
+                        <BookCard
+                            book={toBook(item, index)}
+                            showButtons
+                            onPress={() =>
+                                router.push({
+                                    pathname: "/(home)/resultdetails",
+                                    params: {
+                                        q,
+                                        isbn: item.isbn,
+                                        title: item.title,
+                                        author: item.authors?.join(", ") ?? "",
+                                        desc: item.contents ?? "",
+                                        coverUrl: item.thumbnail ?? "",
+                                        publisher: item.publisher ?? "",
+                                    },
+                                })
+                            }
+                        />
+                    )}
+                />
+            )}
         </View>
     );
 }
@@ -62,6 +124,7 @@ export default function HomeSearchResultScreen() {
 const styles = StyleSheet.create({
     screen: { flex: 1, backgroundColor: COLORS.bg },
     safe: { backgroundColor: COLORS.bg },
+    center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
     top: {
         flexDirection: "row",
@@ -70,11 +133,17 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         paddingBottom: 14,
     },
-    backBtn: {
-        width: 34,
-        height: 34,
-        alignItems: "center",
-        justifyContent: "center",
-    },
+    backBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
+
     list: { paddingHorizontal: 18, paddingBottom: 18 },
+
+    errorText: { fontSize: 14, color: COLORS.primary, marginBottom: 12 },
+    retryBtn: {
+        paddingHorizontal: 20,
+        paddingVertical: 8,
+        backgroundColor: COLORS.primary,
+        borderRadius: 8,
+    },
+    retryText: { color: COLORS.white, fontWeight: "700" },
+    emptyText: { fontSize: 13, color: COLORS.muted, fontWeight: "600" },
 });

@@ -17,11 +17,12 @@ import MessageBubble from "@/components/ui/MessageBubble";
 import ChatInput from "@/components/ui/ChatInput";
 import {
     type AiMessage,
-    saveAiSession,
+    discardAiRoom,
     finishAiSession,
-    startAiSession,
     getAiMessages,
+    saveAiSession,
     sendAiMessage,
+    startAiSession,
 } from "@/services/api";
 
 const keyExtractor = (item: AiMessage) => `${item.id}`;
@@ -33,15 +34,16 @@ export default function AiRoomScreen() {
         bookTitle?: string;
     }>();
 
-    const roomId = Number(roomIdParam);
+    const roomId = parseInt(String(roomIdParam), 10);
 
     const [messages, setMessages] = useState<AiMessage[]>([]);
     const [isSending, setIsSending] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+    const [isExiting, setIsExiting] = useState(false);
     const flatListRef = useRef<FlatList<AiMessage>>(null);
 
     useEffect(() => {
-        if (!roomId) return;
+        if (!roomId || Number.isNaN(roomId)) return;
 
         (async () => {
             try {
@@ -51,7 +53,7 @@ export default function AiRoomScreen() {
 
                 const res = await getAiMessages(roomId);
 
-                const normalized: AiMessage[] = (res.data ?? []).map((m: any) => ({
+                const normalized: AiMessage[] = (res.data ?? []).map((m) => ({
                     id: m.messageId,
                     roomId,
                     sender: m.role === "USER" ? "ME" : "AI",
@@ -71,7 +73,7 @@ export default function AiRoomScreen() {
 
     const onSend = useCallback(
         async (text: string) => {
-            if (isSending || !text.trim()) return;
+            if (isSending || isExiting || !text.trim()) return;
 
             setIsSending(true);
 
@@ -88,9 +90,8 @@ export default function AiRoomScreen() {
             try {
                 const res = await sendAiMessage(roomId, text);
 
-                // 백엔드는 AI 메시지만 반환 → userMessage는 tempUserMsg를 그대로 확정처리
                 const aiMessage: AiMessage = {
-                    id: res.data.messageId,       // ← data가 곧 AI MessageResponse
+                    id: res.data.messageId,
                     sender: "AI",
                     text: res.data.content,
                     createdAt: res.data.createdAt,
@@ -99,10 +100,9 @@ export default function AiRoomScreen() {
 
                 setMessages((prev) => [
                     ...prev.filter((m) => m.id !== tempUserMsg.id),
-                    { ...tempUserMsg, id: tempUserMsg.id }, // tempUser 그대로 확정 (이미 화면에 있음)
+                    tempUserMsg,
                     aiMessage,
                 ]);
-
             } catch (e: any) {
                 setMessages((prev) => prev.filter((m) => m.id !== tempUserMsg.id));
                 Alert.alert("전송 실패", e?.message ?? "메시지 전송에 실패했습니다.");
@@ -113,45 +113,86 @@ export default function AiRoomScreen() {
                 }, 100);
             }
         },
-        [isSending, roomId]
+        [isSending, isExiting, roomId]
     );
 
+    const goChatIndex = useCallback(() => {
+        router.replace("/(tabs)/chat");
+    }, [router]);
+
+    const handleSaveAndExit = useCallback(async () => {
+        if (isExiting) return;
+
+        try {
+            setIsExiting(true);
+            await saveAiSession(roomId);
+            goChatIndex();
+        } catch (e: any) {
+            console.error("세션 저장 실패:", e);
+            Alert.alert("오류", e?.message ?? "채팅 저장 후 나가기에 실패했습니다.");
+        } finally {
+            setIsExiting(false);
+        }
+    }, [isExiting, roomId, goChatIndex]);
+
+    const handleFinishAndExit = useCallback(async () => {
+        if (isExiting) return;
+
+        try {
+            setIsExiting(true);
+            await finishAiSession(roomId);
+            goChatIndex();
+        } catch (e: any) {
+            console.error("완독 처리 실패:", e);
+            Alert.alert("오류", e?.message ?? "완독 처리에 실패했습니다.");
+        } finally {
+            setIsExiting(false);
+        }
+    }, [isExiting, roomId, goChatIndex]);
+
+    const handleDiscardAndExit = useCallback(async () => {
+        if (isExiting) return;
+
+        try {
+            setIsExiting(true);
+            await discardAiRoom(roomId);
+            goChatIndex();
+        } catch (e: any) {
+            console.error("채팅방 삭제 실패:", e);
+            Alert.alert("오류", e?.message ?? "채팅방 삭제에 실패했습니다.");
+        } finally {
+            setIsExiting(false);
+        }
+    }, [isExiting, roomId, goChatIndex]);
+
     const openExitDialog = useCallback(() => {
+        if (isExiting) return;
+
         Alert.alert(
             "채팅방 나가기",
             "",
             [
                 {
                     text: "채팅 저장 후 나중에 이어하기",
-                    onPress: async () => {
-                        try {
-                            await saveAiSession(roomId);
-                        } catch (e) {
-                            console.warn("세션 저장 실패:", e);
-                        }
-                        router.back();
-                    },
+                    onPress: handleSaveAndExit,
                 },
                 {
                     text: "채팅 완료하기 (완독 처리)",
-                    onPress: async () => {
-                        try {
-                            await finishAiSession(roomId);
-                        } catch (e) {
-                            console.warn("완독 처리 실패:", e);
-                        }
-                        router.back();
-                    },
+                    onPress: handleFinishAndExit,
                 },
                 {
                     text: "저장하지 않고 나가기",
                     style: "destructive",
-                    onPress: () => router.back(),
+                    onPress: handleDiscardAndExit,
+                },
+                {
+                    text: "취소",
+                    style: "cancel",
                 },
             ],
             { cancelable: true }
         );
-    }, [roomId, router]);
+    }, [isExiting, handleSaveAndExit, handleFinishAndExit, handleDiscardAndExit]);
 
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
@@ -167,7 +208,7 @@ export default function AiRoomScreen() {
                             justifyContent: "space-between",
                         }}
                     >
-                        <Pressable onPress={openExitDialog} hitSlop={10}>
+                        <Pressable onPress={openExitDialog} hitSlop={10} disabled={isExiting}>
                             <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
                         </Pressable>
 
@@ -202,7 +243,7 @@ export default function AiRoomScreen() {
                     />
                 )}
 
-                {isSending && (
+                {(isSending || isExiting) && (
                     <View
                         style={{
                             paddingHorizontal: 16,
@@ -214,12 +255,12 @@ export default function AiRoomScreen() {
                     >
                         <ActivityIndicator size="small" color={COLORS.primary} />
                         <Text style={{ color: COLORS.muted, fontSize: 12 }}>
-                            AI가 응답 중...
+                            {isSending ? "AI가 응답 중..." : "처리 중..."}
                         </Text>
                     </View>
                 )}
 
-                <ChatInput onSend={onSend} disabled={isSending} />
+                <ChatInput onSend={onSend} disabled={isSending || isExiting} />
             </KeyboardAvoidingView>
         </SafeAreaView>
     );

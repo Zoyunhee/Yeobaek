@@ -1,87 +1,220 @@
-// app/(tabs)/chat/group-detail.tsx
-import React, { useMemo } from "react";
-import { Image, Pressable, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { COLORS } from "@/constants/colors";
-import AppButton from "@/components/ui/AppButton";
-import { useChatStore } from "@/src/chat/store";
+import React, { useState } from "react";
+import {
+    View,
+    Text,
+    TextInput,
+    Pressable,
+    Alert,
+    StyleSheet,
+    ScrollView,
+} from "react-native";
+import { useRouter } from "expo-router";
+import { createDiscussionRoom } from "@/services/api";
 
-export default function GroupDetailScreen() {
+export default function GroupCreateScreen() {
     const router = useRouter();
-    const { roomId } = useLocalSearchParams<{ roomId: string }>();
-    const { groupRooms } = useChatStore();
 
-    const room = useMemo(() => groupRooms.find((r) => r.id === roomId), [groupRooms, roomId]);
-    if (!room) return null;
+    const [bookTitle, setBookTitle] = useState("");
+    const [bookAuthor, setBookAuthor] = useState("");
+    const [description, setDescription] = useState("");
+    const [maxParticipants, setMaxParticipants] = useState("4");
+    const [discussionStartTime, setDiscussionStartTime] = useState("");
+    const [rule1, setRule1] = useState("");
+    const [rule2, setRule2] = useState("");
+    const [rule3, setRule3] = useState("");
+    const [rule4, setRule4] = useState("");
+    const [loading, setLoading] = useState(false);
 
-    const moods = [room.mood1, room.mood2, room.mood3, room.mood4].filter((v) => v && v.trim().length > 0);
+    const currentUser = {
+        id: 1,
+        userId: "test",
+        nickname: "테스트",
+    };
+
+    async function handleCreate() {
+        try {
+            if (!bookTitle.trim()) {
+                return Alert.alert("알림", "책 제목을 입력해 주세요.");
+            }
+
+            if (!bookAuthor.trim()) {
+                return Alert.alert("알림", "저자를 입력해 주세요.");
+            }
+
+            if (!discussionStartTime.trim()) {
+                return Alert.alert(
+                    "알림",
+                    "시작 시간을 입력해 주세요.\n예: 2025-03-13T20:00:00"
+                );
+            }
+
+            const rules = [rule1, rule2, rule3, rule4]
+                .map((v) => v.trim())
+                .filter(Boolean);
+
+            if (rules.length === 0) {
+                return Alert.alert("알림", "규칙/분위기는 최소 1개 이상 입력해 주세요.");
+            }
+
+            const max = Math.max(2, Math.min(4, Number(maxParticipants) || 4));
+
+            setLoading(true);
+
+            const res = await createDiscussionRoom({
+                bookTitle: bookTitle.trim(),
+                bookAuthor: bookAuthor.trim(),
+                description: description.trim(),
+                maxParticipants: max,
+                discussionStartTime,
+                hostId: currentUser.id,
+                discussionRules: rules,
+            });
+
+            if (res.success) {
+                Alert.alert("완료", "방이 생성되었습니다.");
+                router.replace({
+                    pathname: "/(tabs)/chat/group-detail",
+                    params: { roomId: String(res.data.id) },
+                });
+            }
+        } catch (error: any) {
+            console.error("방 생성 실패:", error);
+            Alert.alert("오류", error?.message || "방 생성에 실패했습니다.");
+        } finally {
+            setLoading(false);
+        }
+    }
 
     return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
-            <View style={{ padding: 16, flex: 1 }}>
-                {/* 상단 */}
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                    <Pressable onPress={() => router.back()} hitSlop={10}>
-                        <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
-                    </Pressable>
+        <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
+            <Text style={styles.title}>그룹 채팅방 만들기</Text>
 
-                    <Text style={{ color: COLORS.primary, fontWeight: "900" }}>입장 전 상세화면</Text>
+            <Text style={styles.label}>책 제목</Text>
+            <TextInput
+                style={styles.input}
+                value={bookTitle}
+                onChangeText={setBookTitle}
+                placeholder="책 제목"
+            />
 
-                    <View style={{ width: 22 }} />
-                </View>
+            <Text style={styles.label}>저자</Text>
+            <TextInput
+                style={styles.input}
+                value={bookAuthor}
+                onChangeText={setBookAuthor}
+                placeholder="저자명"
+            />
 
-                {/* 커버 */}
-                <View style={{ alignItems: "center", marginTop: 20, gap: 10 }}>
-                    <View
-                        style={{
-                            width: 160,
-                            height: 220,
-                            borderRadius: 16,
-                            backgroundColor: COLORS.secondary,
-                            overflow: "hidden",
-                            borderWidth: 1,
-                            borderColor: COLORS.border,
-                            alignItems: "center",
-                            justifyContent: "center",
-                        }}
-                    >
-                        {room.coverUrl ? (
-                            <Image source={{ uri: room.coverUrl }} style={{ width: "100%", height: "100%" }} />
-                        ) : (
-                            <Text style={{ color: COLORS.primary, fontWeight: "900" }}>책</Text>
-                        )}
-                    </View>
+            <Text style={styles.label}>방 설명</Text>
+            <TextInput
+                style={[styles.input, styles.textArea]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="어떤 이야기를 나눌지 적어 주세요"
+                multiline
+            />
 
-                    <Text style={{ color: COLORS.primary, fontWeight: "900", fontSize: 16 }}>{room.bookTitle}</Text>
-                    <Text style={{ color: COLORS.stepGreen, fontWeight: "900" }}>“{room.topic}”</Text>
-                </View>
+            <Text style={styles.label}>최대 인원 (2~4)</Text>
+            <TextInput
+                style={styles.input}
+                value={maxParticipants}
+                onChangeText={setMaxParticipants}
+                keyboardType="number-pad"
+                placeholder="4"
+            />
 
-                {/* 정보 */}
-                <View style={{ marginTop: 18, gap: 12 }}>
-                    <Text style={{ color: COLORS.primary, fontWeight: "900" }}>• 채팅방 정보</Text>
-                    <Text style={{ color: COLORS.primaryDark }}>참여 인원: {room.joinedPeople} / {room.maxPeople} 명</Text>
-                    <Text style={{ color: COLORS.primaryDark }}>시작 시간: {new Date(room.startAt).toLocaleString()}</Text>
-                    <Text style={{ color: COLORS.primaryDark }}>예상 시간: {room.durationMin} 분</Text>
+            <Text style={styles.label}>시작 시간</Text>
+            <TextInput
+                style={styles.input}
+                value={discussionStartTime}
+                onChangeText={setDiscussionStartTime}
+                placeholder="2025-03-13T20:00:00"
+            />
 
-                    <Text style={{ color: COLORS.primary, fontWeight: "900", marginTop: 8 }}>• 대화 분위기/규칙/스타일</Text>
-                    {moods.length ? moods.map((t, i) => (
-                        <Text key={`${t}-${i}`} style={{ color: COLORS.primaryDark }}>
-                            {t}
-                        </Text>
-                    )) : (
-                        <Text style={{ color: COLORS.muted }}>입력된 항목이 없어요</Text>
-                    )}
-                </View>
+            <Text style={styles.label}>규칙/분위기 1</Text>
+            <TextInput
+                style={styles.input}
+                value={rule1}
+                onChangeText={setRule1}
+                placeholder="예: 존중하며 말하기"
+            />
 
-                <View style={{ marginTop: "auto" }}>
-                    <AppButton
-                        title="참여하기"
-                        onPress={() => router.replace({ pathname: "/(tabs)/chat/group-lobby", params: { roomId: room.id } } as any)}
-                    />
-                </View>
-            </View>
-        </SafeAreaView>
+            <Text style={styles.label}>규칙/분위기 2</Text>
+            <TextInput
+                style={styles.input}
+                value={rule2}
+                onChangeText={setRule2}
+                placeholder="예: 스포일러 주의"
+            />
+
+            <Text style={styles.label}>규칙/분위기 3</Text>
+            <TextInput
+                style={styles.input}
+                value={rule3}
+                onChangeText={setRule3}
+                placeholder="선택"
+            />
+
+            <Text style={styles.label}>규칙/분위기 4</Text>
+            <TextInput
+                style={styles.input}
+                value={rule4}
+                onChangeText={setRule4}
+                placeholder="선택"
+            />
+
+            <Pressable
+                style={[styles.button, loading && { opacity: 0.6 }]}
+                onPress={handleCreate}
+                disabled={loading}
+            >
+                <Text style={styles.buttonText}>
+                    {loading ? "생성 중..." : "방 만들기"}
+                </Text>
+            </Pressable>
+        </ScrollView>
     );
 }
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: "#fff",
+        padding: 16,
+    },
+    title: {
+        fontSize: 24,
+        fontWeight: "700",
+        marginBottom: 20,
+    },
+    label: {
+        fontSize: 14,
+        fontWeight: "600",
+        marginBottom: 8,
+        marginTop: 10,
+    },
+    input: {
+        borderWidth: 1,
+        borderColor: "#ddd",
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        backgroundColor: "#fafafa",
+    },
+    textArea: {
+        minHeight: 100,
+        textAlignVertical: "top",
+    },
+    button: {
+        marginTop: 24,
+        backgroundColor: "#222",
+        borderRadius: 12,
+        alignItems: "center",
+        paddingVertical: 14,
+    },
+    buttonText: {
+        color: "#fff",
+        fontWeight: "700",
+        fontSize: 16,
+    },
+});

@@ -1,13 +1,11 @@
-import React from "react";
+import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import AppButton from "@/components/ui/AppButton";
-
-const AUTH_TOKEN_KEY = "auth_token_v1"; // 너네 로그인 방식에 맞게 키만 바꿔줘
+import { logout } from "@/services/api";
 
 function Row({
                  icon,
@@ -19,10 +17,14 @@ function Row({
     onPress: () => void;
 }) {
     return (
-        <Pressable onPress={onPress} style={({ pressed }) => [s.row, pressed && { opacity: 0.92 }]}>
+        <Pressable
+            onPress={onPress}
+            style={({ pressed }) => [s.row, pressed && { opacity: 0.92 }]}
+        >
             <View style={s.rowIcon}>
                 <IconSymbol name={icon} size={18} color={COLORS.primary} />
             </View>
+
             <Text style={s.rowTitle}>{title}</Text>
             <View style={{ flex: 1 }} />
             <Text style={s.chev}>›</Text>
@@ -32,30 +34,35 @@ function Row({
 
 export default function SettingsScreen() {
     const router = useRouter();
+    const [loading, setLoading] = useState(false);
 
-    const onLogout = () => {
+    const handleLogout = () => {
         Alert.alert("로그아웃", "정말 로그아웃 할까요?", [
             { text: "취소", style: "cancel" },
             {
                 text: "로그아웃",
                 style: "destructive",
                 onPress: async () => {
-                    await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
-                    router.replace("/(auth)/login");
+                    try {
+                        setLoading(true);
+
+                        await logout();
+
+                        await AsyncStorage.removeItem("user");
+
+                        router.replace("/(auth)/login");
+                    } catch (e: any) {
+                        Alert.alert("로그아웃", e?.message ?? "로그아웃 중 오류가 발생했어요.");
+                    } finally {
+                        setLoading(false);
+                    }
                 },
             },
         ]);
     };
 
-    const handleLogout = async () => {
-        await AsyncStorage.clear(); // 필요 없으면 삭제 가능
-
-        router.replace("/(auth)/login"); // 로그인 화면 경로에 맞게 수정
-    };
-
     return (
         <SafeAreaView style={s.safe}>
-            {/* 헤더 */}
             <View style={s.header}>
                 <Pressable onPress={() => router.back()} hitSlop={12} style={s.headerBtn}>
                     <IconSymbol name="chevron.down" size={20} color={COLORS.primary} />
@@ -64,22 +71,32 @@ export default function SettingsScreen() {
                 <View style={{ width: 36 }} />
             </View>
 
-            {/* 메뉴 카드 */}
             <View style={s.card}>
                 <Text style={s.sectionTitle}>계정</Text>
 
-                <Row icon="person" title="닉네임 변경" onPress={() => router.push("/(profile)/name-edit")} />
+                <Row
+                    icon="person"
+                    title="닉네임 변경"
+                    onPress={() => router.push("/(profile)/name-edit")}
+                />
                 <View style={s.divider} />
 
-                <Row icon="lock" title="비밀번호 변경" onPress={() => router.push("/(profile)/password-edit")} />
+                <Row
+                    icon="lock"
+                    title="비밀번호 변경"
+                    onPress={() => router.push("/(profile)/password-edit")}
+                />
                 <View style={s.divider} />
 
-                <Row icon="photo" title="프로필 사진 변경" onPress={() => router.push("/(profile)/profile-photo-edit")} />
+                <Row
+                    icon="photo"
+                    title="프로필 사진 변경"
+                    onPress={() => router.push("/(profile)/profile-photo-edit")}
+                />
             </View>
 
-            {/* 로그아웃 */}
-            <Pressable onPress={handleLogout} style={s.logoutWrap}>
-                <Text style={s.logoutText}>로그아웃</Text>
+            <Pressable onPress={handleLogout} style={s.logoutWrap} disabled={loading}>
+                <Text style={s.logoutText}>{loading ? "로그아웃 중..." : "로그아웃"}</Text>
             </Pressable>
         </SafeAreaView>
     );
@@ -160,12 +177,12 @@ const s = StyleSheet.create({
     logoutWrap: {
         marginTop: 28,
         alignItems: "center",
-        paddingVertical: 12, // 터치여백
+        paddingVertical: 12,
     },
 
     logoutText: {
         fontSize: 15,
         fontWeight: "700",
-        color: COLORS.muted, // 또는 COLORS.primary
+        color: COLORS.muted,
     },
 });

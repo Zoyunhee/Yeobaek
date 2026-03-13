@@ -17,6 +17,9 @@ import AppButton from "@/components/ui/AppButton";
 import {
     type BookSearchItem,
     createAiRoom,
+    getBookGenre,
+    saveBook,
+    saveEmotionLog,
     searchBooks,
 } from "@/services/api";
 
@@ -75,27 +78,61 @@ export default function AiCreateScreen() {
             return;
         }
 
+        if (!selected.isbn) {
+            Alert.alert("오류", "ISBN이 없는 도서는 선택할 수 없습니다.");
+            return;
+        }
+
         setIsCreating(true);
 
         try {
-            const res = await createAiRoom({
+            // 1) 장르 보강
+            let genre = selected.genre ?? "기타";
+
+            try {
+                const genreRes = await getBookGenre(selected.isbn);
+                genre = genreRes.data?.genre ?? genre;
+            } catch (e) {
+                console.warn("장르 조회 실패 - 기타로 진행:", e);
+            }
+
+            // 2) 책 DB 저장
+            await saveBook({
+                isbn: selected.isbn,
+                title: selected.title,
+                authors: selected.authors ?? [],
+                publisher: selected.publisher,
+                thumbnail: selected.thumbnail,
+                genre,
+            });
+
+            // 3) 채팅방 생성
+            const roomRes = await createAiRoom({
                 isbn: selected.isbn,
                 title: selected.title,
                 coverUrl: selected.thumbnail,
                 authorText: selected.authors?.join(", "),
                 publisher: selected.publisher,
+                genre,
                 emotionId: selectedEmotionId,
             });
 
-            const roomId = res.roomId;
+            const roomId = roomRes.roomId;
 
+            // 4) 감정 로그 저장
+            await saveEmotionLog({
+                roomId,
+                emotionId: selectedEmotionId,
+            });
+
+            // 5) 채팅방으로 이동
             router.replace({
                 pathname: "/(tabs)/chat/ai-room",
                 params: {
                     roomId: String(roomId),
                     bookTitle: selected.title,
                 },
-            } as any);
+            } as never);
         } catch (e: any) {
             Alert.alert("채팅방 생성 실패", e?.message ?? "다시 시도해주세요.");
         } finally {
@@ -210,7 +247,7 @@ export default function AiCreateScreen() {
 
                                     return (
                                         <Pressable
-                                            key={`${b.isbn || "noisbn"}-${b.title || "notitle"}-${b.authors?.join(",") || "noauthor"}-${index}`}
+                                            key={`${b.isbn || "noisbn"}-${b.title || "notitle"}-${index}`}
                                             onPress={() => {
                                                 setSelected(b);
                                                 setQuery("");
@@ -219,9 +256,7 @@ export default function AiCreateScreen() {
                                                 paddingVertical: 10,
                                                 paddingHorizontal: 10,
                                                 borderRadius: 10,
-                                                backgroundColor: active
-                                                    ? COLORS.mintLight
-                                                    : COLORS.bg,
+                                                backgroundColor: active ? COLORS.mintLight : COLORS.bg,
                                                 borderWidth: 1,
                                                 borderColor: active ? COLORS.mint : COLORS.border,
                                                 flexDirection: "row",

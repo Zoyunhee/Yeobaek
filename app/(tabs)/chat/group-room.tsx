@@ -1,94 +1,112 @@
-// app/(tabs)/chat/group-room.tsx
-import React, { useMemo } from "react";
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { COLORS } from "@/constants/colors";
-import MessageBubble from "@/components/ui/MessageBubble";
-import ChatInput from "@/components/ui/ChatInput";
-import { useChatStore } from "@/src/chat/store";
+import React, { useEffect, useRef, useState } from "react";
+import {
+    View,
+    Text,
+    TextInput,
+    Pressable,
+    FlatList,
+    StyleSheet,
+} from "react-native";
+import { useLocalSearchParams } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export default function GroupRoomScreen() {
-    const router = useRouter();
-    const { roomId } = useLocalSearchParams<{ roomId: string }>();
-    const { groupRooms, messages, addMessage, updateGroupRoomStatus } = useChatStore();
+import { getDiscussionMessages } from "@/services/api";
+import {
+    createDiscussionSocket,
+    publishDiscussionChat,
+} from "@/services/groupSocket";
 
-    const room = useMemo(() => groupRooms.find((r) => r.id === roomId), [groupRooms, roomId]);
-    const roomMessages = useMemo(() => messages.filter((m) => m.roomId === roomId), [messages, roomId]);
-    if (!room) return null;
+export default function GroupRoom() {
+    const { roomId } = useLocalSearchParams();
 
-    const onSend = (text: string) => addMessage({ roomId: room.id, sender: "ME", text });
+    const [messages, setMessages] = useState<any[]>([]);
+    const [text, setText] = useState("");
 
-    const openExitDialog = () => {
-        Alert.alert(
-            "채팅방 나가기",
-            "",
-            [
-                {
-                    text: "이어하기",
-                    style: "cancel",
-                    onPress: () => {},
+    const clientRef = useRef<any>(null);
+
+    async function getCurrentUser() {
+        const userStr = await AsyncStorage.getItem("user");
+        if (!userStr) return null;
+        return JSON.parse(userStr);
+    }
+
+    useEffect(() => {
+        async function init() {
+            const history = await getDiscussionMessages(Number(roomId));
+            if (history.success) setMessages(history.data);
+
+            const client = createDiscussionSocket({
+                roomId: Number(roomId),
+                onMessage: (msg: any) => {
+                    setMessages((prev) => [...prev, msg]);
                 },
-                {
-                    text: "종료 후 완료 채팅에 저장하기",
-                    onPress: () => {
-                        updateGroupRoomStatus(room.id, "ENDED");
-                        router.back();
-                    },
-                },
-            ],
-            { cancelable: true }
-        );
-    };
+            });
+
+            clientRef.current = client;
+        }
+
+        init();
+    }, []);
+
+    async function send() {
+        const user = await getCurrentUser();
+        if (!user || !text.trim()) return;
+
+        publishDiscussionChat(clientRef.current, Number(roomId), {
+            discussionRoomId: Number(roomId),
+            type: "CHAT",
+            content: text,
+            sender: {
+                id: user.id,
+                userId: user.userId,
+                nickname: user.nickname,
+            },
+        });
+
+        setText("");
+    }
 
     return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
-            <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-                {/* 상단 바: ••• 제거, 뒤로가기가 나가기 */}
-                <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                        <Pressable onPress={openExitDialog} hitSlop={10}>
-                            <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
-                        </Pressable>
+        <View style={styles.container}>
+            <FlatList
+                data={messages}
+                keyExtractor={(item, i) => i.toString()}
+                renderItem={({ item }) => (
+                    <Text>
+                        {item.sender?.nickname}: {item.content}
+                    </Text>
+                )}
+            />
 
-                        <Text style={{ color: COLORS.primary, fontWeight: "900" }}>{room.bookTitle}</Text>
+            <TextInput
+                value={text}
+                onChangeText={setText}
+                style={styles.input}
+                placeholder="메시지 입력"
+            />
 
-                        <View style={{ width: 22 }} />
-                    </View>
-
-                    {/* 주제 고정 */}
-                    <View
-                        style={{
-                            marginTop: 10,
-                            backgroundColor: COLORS.white,
-                            borderWidth: 1,
-                            borderColor: COLORS.border,
-                            padding: 10,
-                            borderRadius: 6,
-                        }}
-                    >
-                        <Text style={{ color: COLORS.primaryDark, fontWeight: "800" }} numberOfLines={1}>
-                            “{room.topic}”
-                        </Text>
-                    </View>
-                </View>
-
-                <FlatList
-                    data={roomMessages}
-                    keyExtractor={(it) => it.id}
-                    contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}
-                    renderItem={({ item }) => (
-                        <MessageBubble
-                            isMe={item.sender === "ME"}
-                            text={item.text}
-                            senderName={item.sender === "USER" ? item.senderName : undefined}
-                        />
-                    )}
-                />
-
-                <ChatInput onSend={onSend} />
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+            <Pressable style={styles.button} onPress={send}>
+                <Text style={styles.buttonText}>전송</Text>
+            </Pressable>
+        </View>
     );
 }
+
+const styles = StyleSheet.create({
+    container: { flex: 1, padding: 20 },
+    input: {
+        borderWidth: 1,
+        borderColor: "#ddd",
+        padding: 10,
+        marginTop: 10,
+        borderRadius: 8,
+    },
+    button: {
+        backgroundColor: "#222",
+        padding: 12,
+        borderRadius: 8,
+        marginTop: 10,
+        alignItems: "center",
+    },
+    buttonText: { color: "#fff" },
+});

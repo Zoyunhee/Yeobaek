@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
     View,
     Text,
@@ -10,85 +10,116 @@ import {
     KeyboardAvoidingView,
     Platform,
     ScrollView,
+    ActivityIndicator,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import SearchBar from "@/components/ui/SearchBar";
+import { createReadingNote, searchBooks } from "@/services/api";
 
-type Book = { id: string; title: string; author: string; createdAt?: string };
-type Note = { id: string; bookTitle: string; quote: string; createdAt: string };
-
-const LIKED_BOOKS_KEY = "liked_books_v1";
-const NOTES_KEY = "reading_notes_v1";
+type Book = {
+    id: string;
+    isbn: string;
+    title: string;
+    author: string;
+    coverImage?: string;
+    publisher?: string;
+};
 
 const BOOK_COVER = require("../../assets/images/book-cover.png");
-
-function nowShort() {
-    const d = new Date();
-    const yy = String(d.getFullYear()).slice(2);
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yy}.${mm}.${dd}`;
-}
 
 export default function NoteCreateScreen() {
     const router = useRouter();
 
-    const [books, setBooks] = useState<Book[]>([]);
     const [query, setQuery] = useState("");
+    const [results, setResults] = useState<Book[]>([]);
+    const [loading, setLoading] = useState(false);
     const [selected, setSelected] = useState<Book | null>(null);
     const [quote, setQuote] = useState("");
-
-    const loadBooks = useCallback(async () => {
-        const raw = await AsyncStorage.getItem(LIKED_BOOKS_KEY);
-        setBooks(raw ? (JSON.parse(raw) as Book[]) : []);
-    }, []);
-
-    useEffect(() => {
-        loadBooks();
-    }, [loadBooks]);
-
-    // 검색 결과(찜 목록에서 필터링). 나중에 API로 교체하면 setResults만 하면 됨.
-    const results = useMemo(() => {
-        const q = query.trim();
-        if (!q) return [];
-        return books.filter((b) => b.title.includes(q) || b.author.includes(q));
-    }, [books, query]);
 
     const canSave = useMemo(() => {
         return !!selected && quote.trim().length > 0;
     }, [selected, quote]);
 
-    const onSelectBook = (b: Book) => {
-        setSelected(b);
-        setQuery(""); // 결과 리스트 숨김
+    const onSearch = async () => {
+        const q = query.trim();
+
+        if (!q) {
+            setResults([]);
+            return;
+        }
+
+        try {
+            setLoading(true);
+
+            const res = await searchBooks(q, 1, 10);
+
+            const mapped: Book[] = (res.items ?? []).map((item, index) => ({
+                id: `${item.isbn}-${index}`,
+                isbn: item.isbn,
+                title: item.title,
+                author: item.authors?.join(", ") ?? "저자 미상",
+                coverImage: item.thumbnail,
+                publisher: item.publisher,
+            }));
+
+            setResults(mapped);
+        } catch (e) {
+            Alert.alert("오류", e instanceof Error ? e.message : "책 검색에 실패했습니다.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const onChangeQuery = (text: string) => {
+        setQuery(text);
+
+        if (!text.trim()) {
+            setResults([]);
+        }
+    };
+
+    const onSelectBook = (book: Book) => {
+        setSelected(book);
+        setQuery("");
+        setResults([]);
+    };
+
+    const onResetSelectedBook = () => {
+        setSelected(null);
     };
 
     const onSave = async () => {
-        if (!canSave) return;
+        if (!selected || !quote.trim()) return;
 
-        Alert.alert("저장", "독서장을 저장하시겠습니까?", [
-            { text: "취소하기", style: "cancel" },
-            {
-                text: "저장하기",
-                onPress: async () => {
-                    const raw = await AsyncStorage.getItem(NOTES_KEY);
-                    const prev = raw ? (JSON.parse(raw) as Note[]) : [];
+        try {
+            const rawUser = await AsyncStorage.getItem("user");
+            if (!rawUser) throw new Error("로그인 정보가 없습니다.");
 
-                    const next: Note = {
-                        id: `note_${Date.now()}`,
-                        bookTitle: selected!.title,
-                        quote: quote.trim(),
-                        createdAt: nowShort(),
-                    };
+            const user = JSON.parse(rawUser);
+            const userId = Number(user.id);
 
-                    await AsyncStorage.setItem(NOTES_KEY, JSON.stringify([next, ...prev]));
-                    router.back();
-                },
-            },
-        ]);
+            if (!userId) {
+                throw new Error("사용자 정보가 올바르지 않습니다.");
+            }
+
+            await createReadingNote({
+                userId,
+                bookIsbn: selected.isbn,
+                bookTitle: selected.title,
+                author: selected.author,
+                coverImage: selected.coverImage,
+                publisher: selected.publisher,
+                memorableQuote: quote.trim(),
+            });
+
+            Alert.alert("완료", "독서장이 저장되었습니다.");
+            router.back();
+        } catch (e) {
+            Alert.alert("오류", e instanceof Error ? e.message : "독서장 저장 실패");
+        }
     };
 
     return (
@@ -100,15 +131,23 @@ export default function NoteCreateScreen() {
                     headerStyle: { backgroundColor: COLORS.bg },
                     headerTitleStyle: { color: COLORS.primary, fontWeight: "900" },
                     headerLeft: () => (
-                        <Pressable onPress={() => router.back()} hitSlop={12} style={styles.headerBtn}>
-                            <IconSymbol name="chevron.left" size={18} color={COLORS.primary} />
+                        <Pressable
+                            onPress={() => router.back()}
+                            hitSlop={12}
+                            style={styles.headerBtn}
+                        >
+                            <IconSymbol
+                                name="chevron.left"
+                                size={18}
+                                color={COLORS.primary}
+                            />
                         </Pressable>
                     ),
                 }}
             />
 
             <KeyboardAvoidingView
-                style={{ flex: 1, backgroundColor: COLORS.bg }}
+                style={styles.screen}
                 behavior={Platform.OS === "ios" ? "padding" : undefined}
                 keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
             >
@@ -117,47 +156,77 @@ export default function NoteCreateScreen() {
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                 >
-                    {/* 검색바 */}
                     <SearchBar
                         value={query}
-                        onChangeText={setQuery}
+                        onChangeText={onChangeQuery}
                         placeholder="책 제목, 저자 검색"
-                        onSubmit={() => {}}
+                        onSubmit={onSearch}
                     />
 
-                    {/* 검색 결과 (선택 전) */}
-                    {!selected && results.length > 0 && (
+                    {!selected && loading && (
+                        <View style={styles.loadingBox}>
+                            <ActivityIndicator color={COLORS.primary} />
+                        </View>
+                    )}
+
+                    {!selected && !loading && results.length > 0 && (
                         <View style={styles.resultBox}>
-                            {results.slice(0, 8).map((b, idx) => (
+                            {results.map((book, idx) => (
                                 <Pressable
-                                    key={b.id}
-                                    onPress={() => onSelectBook(b)}
-                                    style={[styles.resultRow, idx === results.slice(0, 8).length - 1 && { borderBottomWidth: 0 }]}
+                                    key={book.id}
+                                    onPress={() => onSelectBook(book)}
+                                    style={[
+                                        styles.resultRow,
+                                        idx === results.length - 1 && {
+                                            borderBottomWidth: 0,
+                                        },
+                                    ]}
                                 >
-                                    <Image source={BOOK_COVER} style={styles.thumb} />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={styles.rTitle}>{b.title}</Text>
-                                        <Text style={styles.rSub}>{b.author}</Text>
+                                    <Image
+                                        source={
+                                            book.coverImage
+                                                ? { uri: book.coverImage }
+                                                : BOOK_COVER
+                                        }
+                                        style={styles.thumb}
+                                    />
+                                    <View style={styles.resultMeta}>
+                                        <Text style={styles.rTitle}>{book.title}</Text>
+                                        <Text style={styles.rSub}>{book.author}</Text>
                                     </View>
                                 </Pressable>
                             ))}
                         </View>
                     )}
 
-                    {/* ✅ 선택된 책 프리뷰(표지칸) */}
+                    {!selected && !loading && query.trim() !== "" && results.length === 0 && (
+                        <View style={styles.emptyBox}>
+                            <Text style={styles.emptyText}>검색 결과가 없습니다.</Text>
+                        </View>
+                    )}
+
                     {selected && (
                         <View style={styles.bookBlock}>
-                            <Image source={BOOK_COVER} style={styles.bigCover} />
+                            <Image
+                                source={
+                                    selected.coverImage
+                                        ? { uri: selected.coverImage }
+                                        : BOOK_COVER
+                                }
+                                style={styles.bigCover}
+                            />
                             <Text style={styles.bookTitle}>{selected.title}</Text>
                             <Text style={styles.bookAuthor}>{selected.author}</Text>
 
-                            <Pressable onPress={() => setSelected(null)} style={styles.changeBtn}>
+                            <Pressable
+                                onPress={onResetSelectedBook}
+                                style={styles.changeBtn}
+                            >
                                 <Text style={styles.changeText}>다른 책 불러오기</Text>
                             </Pressable>
                         </View>
                     )}
 
-                    {/* 텍스트 입력 */}
                     <View style={styles.inputCard}>
                         <TextInput
                             value={quote}
@@ -169,11 +238,9 @@ export default function NoteCreateScreen() {
                         />
                     </View>
 
-                    {/* 하단 버튼 공간 확보 */}
                     <View style={{ height: 90 }} />
                 </ScrollView>
 
-                {/* ✅ 저장 버튼(고정) */}
                 <View style={styles.bottomBar}>
                     <Pressable
                         onPress={onSave}
@@ -193,11 +260,35 @@ export default function NoteCreateScreen() {
 }
 
 const styles = StyleSheet.create({
-    headerBtn: { paddingHorizontal: 6 },
+    screen: {
+        flex: 1,
+        backgroundColor: COLORS.bg,
+    },
+
+    headerBtn: {
+        paddingHorizontal: 6,
+    },
 
     container: {
         paddingHorizontal: 16,
         paddingTop: 14,
+    },
+
+    loadingBox: {
+        marginTop: 14,
+        alignItems: "center",
+    },
+
+    emptyBox: {
+        marginTop: 14,
+        paddingVertical: 18,
+        alignItems: "center",
+    },
+
+    emptyText: {
+        fontSize: 13,
+        fontWeight: "800",
+        color: COLORS.neutralDark,
     },
 
     resultBox: {
@@ -208,6 +299,7 @@ const styles = StyleSheet.create({
         backgroundColor: COLORS.white,
         overflow: "hidden",
     },
+
     resultRow: {
         flexDirection: "row",
         gap: 12,
@@ -217,6 +309,11 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: COLORS.border,
     },
+
+    resultMeta: {
+        flex: 1,
+    },
+
     thumb: {
         width: 38,
         height: 52,
@@ -225,14 +322,26 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border,
         backgroundColor: COLORS.secondary,
     },
-    rTitle: { fontSize: 13, fontWeight: "900", color: COLORS.primary },
-    rSub: { marginTop: 4, fontSize: 12, fontWeight: "800", color: COLORS.neutralDark },
+
+    rTitle: {
+        fontSize: 13,
+        fontWeight: "900",
+        color: COLORS.primary,
+    },
+
+    rSub: {
+        marginTop: 4,
+        fontSize: 12,
+        fontWeight: "800",
+        color: COLORS.neutralDark,
+    },
 
     bookBlock: {
         marginTop: 18,
         alignItems: "center",
         gap: 6,
     },
+
     bigCover: {
         width: 120,
         height: 160,
@@ -241,8 +350,20 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border,
         backgroundColor: COLORS.secondary,
     },
-    bookTitle: { marginTop: 10, fontSize: 14, fontWeight: "900", color: COLORS.primary },
-    bookAuthor: { fontSize: 12, fontWeight: "800", color: COLORS.neutralDark },
+
+    bookTitle: {
+        marginTop: 10,
+        fontSize: 14,
+        fontWeight: "900",
+        color: COLORS.primary,
+    },
+
+    bookAuthor: {
+        fontSize: 12,
+        fontWeight: "800",
+        color: COLORS.neutralDark,
+    },
+
     changeBtn: {
         marginTop: 10,
         borderWidth: 1,
@@ -252,7 +373,12 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         borderRadius: 10,
     },
-    changeText: { fontSize: 12, fontWeight: "900", color: COLORS.primary },
+
+    changeText: {
+        fontSize: 12,
+        fontWeight: "900",
+        color: COLORS.primary,
+    },
 
     inputCard: {
         marginTop: 14,
@@ -262,6 +388,7 @@ const styles = StyleSheet.create({
         backgroundColor: COLORS.white,
         padding: 12,
     },
+
     textArea: {
         minHeight: 180,
         fontSize: 12,
@@ -278,6 +405,7 @@ const styles = StyleSheet.create({
         paddingTop: 10,
         paddingBottom: Platform.OS === "ios" ? 18 : 12,
     },
+
     saveBtn: {
         height: 44,
         borderRadius: 12,
@@ -285,6 +413,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+
     saveText: {
         fontSize: 13,
         fontWeight: "900",

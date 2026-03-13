@@ -30,6 +30,20 @@ export default function Login() {
         try {
             const data = await login(username.trim(), password);
 
+            await AsyncStorage.setItem(
+                "user",
+                JSON.stringify({
+                    id: data.id,
+                    userId: data.userId,
+                    name: data.name,
+                    nickname: data.nickname ?? "",
+                    email: data.email ?? "",
+                    role: data.role,
+                    surveyCompleted: data.surveyCompleted,
+                })
+            );
+
+            // 기존 키도 다른 화면에서 쓸 수 있으니 같이 유지해도 됨
             await AsyncStorage.setItem("auth_user_id", String(data.id));
             await AsyncStorage.setItem("auth_user_nickname", data.nickname ?? "");
             await AsyncStorage.setItem("auth_user_email", data.email ?? "");
