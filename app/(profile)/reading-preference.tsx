@@ -21,12 +21,19 @@ import {
     getActivityStats,
     getEmotionGenreStats,
     getThinkingStyleStats,
+    getMyProfile,
+    getAvailableGenres,
 } from "@/services/api";
 
-const PREF_GENRES_KEY = "pref_genres_v1";
-
 type LinePoint = { xLabel: string; hour: number; value: number };
-type PieSlice = { key: string; emoji: string; value: number; color: string };
+
+type PieSlice = {
+    key: string;
+    emoji: string;
+    label: string;
+    value: number;
+    color: string;
+};
 
 type ThinkingStyleApi = {
     critic: number;
@@ -35,6 +42,34 @@ type ThinkingStyleApi = {
     empathy: number;
     creative: number;
 };
+
+const DEFAULT_GENRES = [
+    "소설",
+    "에세이",
+    "시",
+    "자기계발",
+    "인문",
+    "경제경영",
+    "과학",
+    "역사",
+    "사회",
+    "예술",
+    "IT",
+    "아동",
+    "청소년",
+    "여행",
+    "건강",
+    "기타",
+];
+
+const EMOTION_ITEMS = [
+    { id: 1, key: "EXCITED", emoji: "🤩", label: "신남", color: "#6C7BFF" },
+    { id: 2, key: "HAPPY", emoji: "😊", label: "행복", color: "#6FCF97" },
+    { id: 3, key: "CALM", emoji: "🙂", label: "평온", color: "#F2C94C" },
+    { id: 4, key: "ANXIOUS", emoji: "😟", label: "불안", color: "#F2994A" },
+    { id: 5, key: "SAD", emoji: "😢", label: "슬픔", color: "#56CCF2" },
+    { id: 6, key: "ANGRY", emoji: "😠", label: "화남", color: "#EB5757" },
+] as const;
 
 function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
     const a = ((angleDeg - 90) * Math.PI) / 180.0;
@@ -133,17 +168,46 @@ function LineChart({ data }: { data: LinePoint[] }) {
     const paddingT = 16;
     const paddingB = 44;
 
-    const maxY = Math.max(...data.map((d) => d.value), 1);
     const minY = 0;
+
+    const rawMax = Math.max(...data.map((d) => d.value), 0);
+
+    const pickNiceMax = (value: number) => {
+        if (value <= 1) return 2;
+        if (value <= 3) return 4;
+        if (value <= 5) return 6;
+        if (value <= 8) return 8;
+        if (value <= 10) return 10;
+        if (value <= 15) return 15;
+        if (value <= 20) return 20;
+        if (value <= 30) return 30;
+        return Math.ceil(value / 10) * 10;
+    };
+
+    const maxY = pickNiceMax(Math.ceil(rawMax * 1.2));
+
+    const makeTicks = (max: number) => {
+        if (max <= 4) return [0, 1, 2, 4];
+        if (max <= 6) return [0, 2, 4, 6];
+        if (max <= 8) return [0, 3, 5, 8];
+        if (max <= 10) return [0, 3, 6, 10];
+        if (max <= 15) return [0, 5, 10, 15];
+        if (max <= 20) return [0, 7, 14, 20];
+        if (max <= 30) return [0, 10, 20, 30];
+
+        const step = Math.ceil(max / 3);
+        return [0, step, step * 2, max];
+    };
+
+    const yTicks = makeTicks(maxY);
 
     const plotW = W - paddingL - paddingR;
     const plotH = H - paddingT - paddingB;
 
-    const xStep = plotW / (data.length - 1);
-
-    const points = data.map((d, i) => {
-        const x = paddingL + i * xStep;
-        const y = paddingT + plotH * (1 - (d.value - minY) / (maxY - minY || 1));
+    const points = data.map((d) => {
+        const x = paddingL + (plotW * d.hour) / 23;
+        const clampedValue = Math.max(minY, Math.min(d.value, maxY));
+        const y = paddingT + plotH * (1 - (clampedValue - minY) / (maxY - minY || 1));
         return { ...d, x, y };
     });
 
@@ -151,56 +215,82 @@ function LineChart({ data }: { data: LinePoint[] }) {
         .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
         .join(" ");
 
-    const gridY = [0, 0.5, 1].map((t) => paddingT + plotH * t);
+    const xTicks = [
+        { label: "00시", hour: 0 },
+        { label: "04시", hour: 4 },
+        { label: "08시", hour: 8 },
+        { label: "12시", hour: 12 },
+        { label: "16시", hour: 16 },
+        { label: "20시", hour: 20 },
+        { label: "24시", hour: 23 },
+    ];
 
     return (
         <View style={styles.chartWrap}>
             <Svg width={W} height={H}>
                 <Rect x={0} y={0} width={W} height={H} rx={12} ry={12} fill={COLORS.white} />
 
-                {gridY.map((y, idx) => (
-                    <Line
-                        key={idx}
-                        x1={paddingL}
-                        x2={W - paddingR}
-                        y1={y}
-                        y2={y}
-                        stroke="#E9E9E9"
-                        strokeWidth={1}
-                    />
-                ))}
+                {yTicks.map((tick) => {
+                    const y = paddingT + plotH * (1 - (tick - minY) / (maxY - minY || 1));
+                    return (
+                        <Line
+                            key={`grid-${tick}`}
+                            x1={paddingL}
+                            x2={W - paddingR}
+                            y1={y}
+                            y2={y}
+                            stroke="#E9E9E9"
+                            strokeWidth={1}
+                        />
+                    );
+                })}
 
-                {["00", "10", "20", "30"].map((t, i) => (
-                    <SvgText
-                        key={t}
-                        x={paddingL - 10}
-                        y={paddingT + plotH - (plotH * i) / 3 + 4}
-                        fontSize={11}
-                        fill={COLORS.primary}
-                        textAnchor="end"
-                    >
-                        {t}
-                    </SvgText>
-                ))}
+                {yTicks.map((tick) => {
+                    const y = paddingT + plotH * (1 - (tick - minY) / (maxY - minY || 1));
+                    return (
+                        <SvgText
+                            key={`y-${tick}`}
+                            x={paddingL - 10}
+                            y={y + 4}
+                            fontSize={11}
+                            fill={COLORS.primary}
+                            textAnchor="end"
+                        >
+                            {tick}
+                        </SvgText>
+                    );
+                })}
 
                 <Path d={pathD} fill="none" stroke="#6C7BFF" strokeWidth={2.5} />
 
-                {points.map((p) => (
-                    <Circle key={p.hour} cx={p.x} cy={p.y} r={4} fill="#6C7BFF" />
+                {points
+                    .filter((p) => [0, 4, 8, 12, 16, 20, 23].includes(p.hour))
+                    .map((p) => (
+                        <Circle key={p.hour} cx={p.x} cy={p.y} r={3} fill="#6C7BFF" />
                 ))}
 
-                {points.map((p, i) => {
-                    const isLast = i === points.length - 1;
+                {xTicks.map((tick, i) => {
+                    let x = paddingL + (plotW * tick.hour) / 23;
+                    let anchor: "start" | "middle" | "end" = "middle";
+
+                    if (i === 0) {
+                        anchor = "start";
+                        x = paddingL - 2;
+                    } else if (i === xTicks.length - 1) {
+                        anchor = "end";
+                        x = W - paddingR + 2;
+                    }
+
                     return (
                         <SvgText
-                            key={i}
-                            x={isLast ? W - paddingR : p.x}
+                            key={`x-${tick.label}`}
+                            x={x}
                             y={H - 16}
                             fontSize={11}
                             fill={COLORS.primary}
-                            textAnchor={isLast ? "end" : "middle"}
+                            textAnchor={anchor}
                         >
-                            {p.xLabel}
+                            {tick.label}
                         </SvgText>
                     );
                 })}
@@ -212,23 +302,48 @@ function LineChart({ data }: { data: LinePoint[] }) {
 function PieChart({ slices }: { slices: PieSlice[] }) {
     const { width: screenW } = useWindowDimensions();
 
+    const visibleSlices = slices.filter((s) => s.value > 0);
+    const total = visibleSlices.reduce((acc, s) => acc + s.value, 0);
+
+    if (total === 0) {
+        return (
+            <View style={styles.pieSection}>
+                <View style={styles.emptyPie}>
+                    <Text style={styles.emptyPieText}>아직 감정 데이터가 없어요</Text>
+                </View>
+            </View>
+        );
+    }
+
     const pieSize = Math.min(260, Math.max(210, screenW - 140));
     const r = pieSize * 0.38;
     const cx = pieSize * 0.45;
     const cy = pieSize * 0.5;
 
-    const total = Math.max(1, slices.reduce((acc, s) => acc + s.value, 0));
     let start = 0;
 
-    const parts = slices.map((s) => {
+    const parts = visibleSlices.map((s) => {
         const angle = (s.value / total) * 360;
         const end = start + angle;
-
-        const mid = (start + end) / 2;
+        const mid = angle >= 360 ? 180 : (start + end) / 2;
         const labelPos = polarToCartesian(cx, cy, r * 0.58, mid);
 
-        const d = describeArc(cx, cy, r, start, end);
-        const out = { ...s, start, end, d, labelPos };
+        const isFullCircle = angle >= 359.999;
+
+        const d = isFullCircle
+            ? undefined
+            : describeArc(cx, cy, r, start, end);
+
+        const out = {
+            ...s,
+            start,
+            end,
+            d,
+            labelPos,
+            angle,
+            isFullCircle,
+        };
+
         start = end;
         return out;
     });
@@ -236,32 +351,52 @@ function PieChart({ slices }: { slices: PieSlice[] }) {
     return (
         <View style={styles.pieWrapRow}>
             <Svg width={pieSize} height={pieSize}>
-                {parts.map((p) => (
-                    <G key={p.key}>
-                        <Path d={p.d} fill={p.color} />
-                        <SvgText x={p.labelPos.x} y={p.labelPos.y} fontSize={16} textAnchor="middle" alignmentBaseline="middle">
-                            {p.emoji}
-                        </SvgText>
-                        <SvgText
-                            x={p.labelPos.x}
-                            y={p.labelPos.y + 20}
-                            fontSize={16}
-                            fill={COLORS.white}
-                            fontWeight="700"
-                            textAnchor="middle"
-                            alignmentBaseline="middle"
-                        >
-                            {p.value}
-                        </SvgText>
-                    </G>
-                ))}
+                {parts.map((p) => {
+                    const percent = Math.round((p.value / total) * 100);
+
+                    return (
+                        <G key={p.key}>
+                            {p.isFullCircle ? (
+                                <Circle cx={cx} cy={cy} r={r} fill={p.color} />
+                            ) : (
+                                <Path d={p.d!} fill={p.color} />
+                            )}
+
+                            {p.angle >= 28 && (
+                                <>
+                                    <SvgText
+                                        x={p.labelPos.x}
+                                        y={p.labelPos.y}
+                                        fontSize={16}
+                                        textAnchor="middle"
+                                        alignmentBaseline="middle"
+                                    >
+                                        {p.emoji}
+                                    </SvgText>
+                                    <SvgText
+                                        x={p.labelPos.x}
+                                        y={p.labelPos.y + 20}
+                                        fontSize={12}
+                                        fill={COLORS.white}
+                                        fontWeight="700"
+                                        textAnchor="middle"
+                                        alignmentBaseline="middle"
+                                    >
+                                        {percent}%
+                                    </SvgText>
+                                </>
+                            )}
+                        </G>
+                    );
+                })}
             </Svg>
 
             <View style={styles.legend}>
-                {slices.map((s) => (
+                {visibleSlices.map((s) => (
                     <View key={s.key} style={styles.legendRow}>
                         <View style={[styles.legendDot, { backgroundColor: s.color }]} />
                         <Text style={styles.legendEmoji}>{s.emoji}</Text>
+                        <Text style={styles.legendLabel}>{s.label}</Text>
                     </View>
                 ))}
             </View>
@@ -269,7 +404,7 @@ function PieChart({ slices }: { slices: PieSlice[] }) {
     );
 }
 
-function getThinkingStyleLabel(data: ThinkingStyleApi | null) {
+function getThinkingStyleLabel(data: ThinkingStyleApi | null, nickname: string) {
     if (!data) return "“ 아직 분석 데이터가 없습니다 ”";
 
     const entries = [
@@ -281,72 +416,39 @@ function getThinkingStyleLabel(data: ThinkingStyleApi | null) {
     ];
 
     entries.sort((a, b) => b.value - a.value);
-    return `“ 여백님은 ${entries[0].label} 사고 스타일입니다 ”`;
+    return `“ ${nickname}님은 ${entries[0].label} 사고 스타일입니다 ”`;
 }
 
-function mapGenreToBackend(genre: string) {
-    const map: Record<string, string> = {
-        "로맨스": "ROMANCE",
-        "스릴러": "THRILLER",
-        "판타지": "FANTASY",
-        "SF": "SF",
-        "미스터리": "MYSTERY",
-        "성장소설": "COMING_OF_AGE",
-        "역사소설": "HISTORICAL_FICTION",
-        "휴먼드라마": "HUMAN_DRAMA",
-        "에세이": "ESSAY",
-        "인문": "HUMANITIES",
-        "사회": "SOCIAL",
-        "철학": "PHILOSOPHY",
-        "심리": "PSYCHOLOGY",
-        "자기계발": "SELF_DEVELOPMENT",
-        "경제 경영": "BUSINESS",
-        "과학": "SCIENCE",
-    };
-    return map[genre] ?? genre;
-}
+function buildFixedPieData(apiSlices: Array<{ label: string; value: number }> = []): PieSlice[] {
+    const valueMap = new Map<string, number>();
 
-function emotionLabelToEmoji(label: string) {
-    const map: Record<string, string> = {
-        "1": "😁",
-        "2": "😭",
-        "3": "😶",
-        HAPPY: "😁",
-        SAD: "😭",
-        NEUTRAL: "😶",
-    };
-    return map[label] ?? "🙂";
+    for (const slice of apiSlices) {
+        valueMap.set(String(slice.label), Number(slice.value) || 0);
+    }
+
+    return EMOTION_ITEMS.map((item) => ({
+        key: item.key,
+        emoji: item.emoji,
+        label: item.label,
+        value: valueMap.get(item.key) ?? 0,
+        color: item.color,
+    }));
 }
 
 export default function ReadingPreferenceScreen() {
     const router = useRouter();
 
+    const [nickname, setNickname] = useState("사용자");
+
     const [year, setYear] = useState<number | null>(null);
     const [month, setMonth] = useState<number | null>(null);
-    const [genre, setGenre] = useState<string>("로맨스");
+    const [genre, setGenre] = useState<string>("소설");
 
     const [yearOpen, setYearOpen] = useState(false);
     const [monthOpen, setMonthOpen] = useState(false);
     const [genreOpen, setGenreOpen] = useState(false);
 
-    const [genreOptions, setGenreOptions] = useState<string[]>([
-        "로맨스",
-        "스릴러",
-        "판타지",
-        "SF",
-        "미스터리",
-        "성장소설",
-        "역사소설",
-        "휴먼드라마",
-        "에세이",
-        "인문",
-        "사회",
-        "철학",
-        "심리",
-        "자기계발",
-        "경제 경영",
-        "과학",
-    ]);
+    const [genreOptions, setGenreOptions] = useState<string[]>(DEFAULT_GENRES);
 
     const [thinkingStyle, setThinkingStyle] = useState<ThinkingStyleApi | null>(null);
     const [lineData, setLineData] = useState<LinePoint[]>([]);
@@ -355,15 +457,33 @@ export default function ReadingPreferenceScreen() {
 
     useEffect(() => {
         (async () => {
-            const raw = await AsyncStorage.getItem(PREF_GENRES_KEY);
-            if (!raw) return;
             try {
-                const parsed = JSON.parse(raw) as string[];
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    setGenreOptions(parsed);
-                    setGenre((prev) => (parsed.includes(prev) ? prev : parsed[0]));
-                }
+                const userIdRaw = await AsyncStorage.getItem("auth_user_id");
+                if (!userIdRaw) return;
+
+                const profileRes = await getMyProfile(Number(userIdRaw));
+                setNickname(profileRes.data.nickname || "사용자");
             } catch {}
+        })();
+    }, []);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await getAvailableGenres();
+                const list = (res.data || []).filter(Boolean);
+
+                if (list.length > 0) {
+                    setGenreOptions(list);
+                    setGenre((prev) => (list.includes(prev) ? prev : list[0]));
+                } else {
+                    setGenreOptions(DEFAULT_GENRES);
+                    setGenre("소설");
+                }
+            } catch {
+                setGenreOptions(DEFAULT_GENRES);
+                setGenre("소설");
+            }
         })();
     }, []);
 
@@ -377,7 +497,7 @@ export default function ReadingPreferenceScreen() {
                     getActivityStats(year, month),
                     getEmotionGenreStats({
                         mode: "GENRE_TO_EMOTION",
-                        genre: mapGenreToBackend(genre),
+                        genre,
                         year,
                         month,
                     }),
@@ -385,38 +505,18 @@ export default function ReadingPreferenceScreen() {
 
                 setThinkingStyle(thinkingRes.data);
 
-                const mappedLine: LinePoint[] = activityRes.data
-                    .filter((item) => [0, 4, 8, 12, 16, 20, 23].includes(item.hour))
-                    .map((item) => ({
-                        hour: item.hour,
-                        xLabel: item.hour === 23 ? "24시" : `${String(item.hour).padStart(2, "0")}시`,
-                        value: Math.round(item.participationScore),
-                    }));
+                const mappedLine: LinePoint[] = Array.from({ length: 24 }, (_, hour) => {
+                    const found = (activityRes.data || []).find((item) => item.hour === hour);
 
-                const fixedHours = [0, 4, 8, 12, 16, 20, 23];
-                const normalizedLine: LinePoint[] = fixedHours.map((hour) => {
-                    const found = mappedLine.find((v) => v.hour === hour);
-                    return (
-                        found || {
-                            hour,
-                            xLabel: hour === 23 ? "24시" : `${String(hour).padStart(2, "0")}시`,
-                            value: 0,
-                        }
-                    );
+                    return {
+                        hour,
+                        xLabel: `${String(hour).padStart(2, "0")}시`,
+                        value: found ? Math.round(found.participationScore) : 0,
+                    };
                 });
 
-                setLineData(normalizedLine);
-
-                const colors = ["#6C7BFF", "#6FCF97", "#F2C94C", "#F2994A", "#BB6BD9", "#56CCF2"];
-
-                const mappedPie: PieSlice[] = (emotionGenreRes.data.slices || []).map((slice, idx) => ({
-                    key: String(slice.label),
-                    emoji: emotionLabelToEmoji(String(slice.label)),
-                    value: Number(slice.value),
-                    color: colors[idx % colors.length],
-                }));
-
-                setPieData(mappedPie);
+                setLineData(mappedLine);
+                setPieData(buildFixedPieData(emotionGenreRes.data.slices || []));
             } catch (error) {
                 const message =
                     error instanceof Error ? error.message : "분석 데이터를 불러오지 못했습니다.";
@@ -429,13 +529,25 @@ export default function ReadingPreferenceScreen() {
         loadAnalytics();
     }, [year, month, genre]);
 
-    const thinkingStyleText = useMemo(() => getThinkingStyleLabel(thinkingStyle), [thinkingStyle]);
+    const thinkingStyleText = useMemo(
+        () => getThinkingStyleLabel(thinkingStyle, nickname),
+        [thinkingStyle, nickname]
+    );
 
     const yearLabel = year ? `${year} 년` : "전체";
     const monthLabel = month ? `${String(month).padStart(2, "0")} 월` : "전체";
 
     const yearOptions = useMemo<(number | null)[]>(() => [null, ...getNowYears()], []);
-    const monthOptions = useMemo<(number | null)[]>(() => [null, ...Array.from({ length: 12 }, (_, i) => i + 1)], []);
+    const monthOptions = useMemo<(number | null)[]>(
+        () => [null, ...Array.from({ length: 12 }, (_, i) => i + 1)],
+        []
+    );
+
+    const fallbackLineData: LinePoint[] = Array.from({ length: 24 }, (_, hour) => ({
+        hour,
+        xLabel: `${String(hour).padStart(2, "0")}시`,
+        value: 0,
+    }));
 
     return (
         <>
@@ -460,21 +572,7 @@ export default function ReadingPreferenceScreen() {
                     <Text style={styles.thinkingStyle}>{loading ? "불러오는 중..." : thinkingStyleText}</Text>
 
                     <Text style={[styles.sectionBracket, { marginTop: 26 }]}>[ 채팅 시간대 - 채팅 참여도 ]</Text>
-                    <LineChart
-                        data={
-                            lineData.length > 0
-                                ? lineData
-                                : [
-                                    { hour: 0, xLabel: "00시", value: 0 },
-                                    { hour: 4, xLabel: "04시", value: 0 },
-                                    { hour: 8, xLabel: "08시", value: 0 },
-                                    { hour: 12, xLabel: "12시", value: 0 },
-                                    { hour: 16, xLabel: "16시", value: 0 },
-                                    { hour: 20, xLabel: "20시", value: 0 },
-                                    { hour: 23, xLabel: "24시", value: 0 },
-                                ]
-                        }
-                    />
+                    <LineChart data={lineData.length > 0 ? lineData : fallbackLineData} />
 
                     <Text style={[styles.sectionBracket, { marginTop: 28 }]}>[ 책 장르에 따른 감정 ]</Text>
 
@@ -483,13 +581,7 @@ export default function ReadingPreferenceScreen() {
                     </View>
 
                     <View style={{ marginTop: 12 }}>
-                        <PieChart
-                            slices={
-                                pieData.length > 0
-                                    ? pieData
-                                    : [{ key: "EMPTY", emoji: "🙂", value: 1, color: "#D9D9D9" }]
-                            }
-                        />
+                        <PieChart slices={pieData} />
                     </View>
                 </ScrollView>
 
@@ -529,11 +621,14 @@ export default function ReadingPreferenceScreen() {
 
 const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: COLORS.bg },
-
+    container: {
+        paddingHorizontal: 18,
+        paddingBottom: 36,
+    },
     header: {
-        height: 52,
-        justifyContent: "center",
-        paddingHorizontal: 12,
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        paddingBottom: 4,
     },
     headerLeft: {
         flexDirection: "row",
@@ -541,122 +636,125 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: 18,
         fontWeight: "900",
         color: COLORS.primary,
-        letterSpacing: -0.3,
     },
-
-    container: {
-        paddingHorizontal: 18,
-        paddingBottom: 40,
-    },
-
     hr: {
         height: 1,
-        backgroundColor: COLORS.border,
+        backgroundColor: COLORS.primary,
+        opacity: 0.18,
         marginBottom: 18,
-        opacity: 0.9,
     },
-
     row: {
         flexDirection: "row",
+        alignItems: "center",
         gap: 12,
-        marginBottom: 18,
     },
-
     dropdownBtn: {
-        height: 44,
+        height: 46,
+        borderRadius: 14,
+        paddingHorizontal: 14,
         backgroundColor: COLORS.white,
         borderWidth: 1,
-        borderColor: COLORS.border,
-        borderRadius: 10,
-        paddingHorizontal: 14,
+        borderColor: COLORS.primary,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
     },
     dropdownText: {
-        fontSize: 16,
-        fontWeight: "900",
+        fontSize: 15,
+        fontWeight: "800",
         color: COLORS.primary,
     },
-
     sectionBracket: {
+        marginTop: 18,
         textAlign: "center",
         fontSize: 20,
         fontWeight: "900",
         color: COLORS.primary,
-        marginTop: 4,
     },
-
     thinkingStyle: {
+        marginTop: 16,
         textAlign: "center",
-        fontSize: 26,
-        fontWeight: "900",
-        color: COLORS.stepGreen,
-        marginTop: 14,
+        fontSize: 23,
         lineHeight: 34,
+        fontWeight: "900",
+        color: "#0E6A50",
     },
-
     chartWrap: {
         marginTop: 14,
         alignItems: "center",
     },
-
+    pieSection: {
+        alignItems: "center",
+        justifyContent: "center",
+    },
     pieWrapRow: {
+        marginTop: 6,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        gap: 10,
+        gap: 16,
     },
-
     legend: {
-        width: 70,
-        paddingTop: 8,
-        gap: 18,
-        alignItems: "flex-start",
+        gap: 14,
+        justifyContent: "center",
     },
     legendRow: {
         flexDirection: "row",
         alignItems: "center",
-        gap: 10,
     },
     legendDot: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        marginRight: 8,
     },
     legendEmoji: {
         fontSize: 22,
+        marginRight: 6,
     },
-
+    legendLabel: {
+        fontSize: 14,
+        fontWeight: "800",
+        color: COLORS.primary,
+    },
+    emptyPie: {
+        width: 210,
+        height: 210,
+        borderRadius: 105,
+        backgroundColor: "#D9D9D9",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    emptyPieText: {
+        fontSize: 14,
+        fontWeight: "800",
+        color: COLORS.primary,
+    },
     modalBackdrop: {
         flex: 1,
-        backgroundColor: "rgba(0,0,0,0.25)",
+        backgroundColor: "rgba(0,0,0,0.18)",
         justifyContent: "center",
-        padding: 22,
+        paddingHorizontal: 22,
     },
     modalCard: {
         backgroundColor: COLORS.white,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: COLORS.border,
+        borderRadius: 20,
         overflow: "hidden",
-        maxHeight: "70%",
     },
     modalTitle: {
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: "900",
         color: COLORS.primary,
-        borderBottomWidth: 1,
-        borderBottomColor: COLORS.border,
+        paddingHorizontal: 18,
+        paddingTop: 18,
+        paddingBottom: 14,
     },
     modalItem: {
-        paddingHorizontal: 14,
-        paddingVertical: 14,
+        paddingHorizontal: 18,
+        paddingVertical: 16,
     },
     modalItemText: {
         fontSize: 15,
@@ -665,7 +763,6 @@ const styles = StyleSheet.create({
     },
     modalSep: {
         height: 1,
-        backgroundColor: COLORS.border,
-        opacity: 0.7,
+        backgroundColor: "#E7E7E7",
     },
 });

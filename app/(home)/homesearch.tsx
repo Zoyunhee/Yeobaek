@@ -1,27 +1,49 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, FlatList } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { COLORS } from "@/constants/colors";
 import SearchBar from "@/components/ui/SearchBar";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { getHomeSearchKeywords, SearchKeywordItem } from "@/services/api";
 
 export default function HomeSearchScreen() {
     const router = useRouter();
     const [q, setQ] = useState("");
-    const [recent, setRecent] = useState<string[]>([
-        "최근 검색어",
-        "최근 검색어",
-        "최근 검색어",
-    ]);
+    const [recent, setRecent] = useState<SearchKeywordItem[]>([]);
 
     const canSubmit = useMemo(() => q.trim().length > 0, [q]);
 
+    const loadRecentKeywords = async () => {
+        try {
+            const res = await getHomeSearchKeywords(10);
+            setRecent(res.data?.recentKeywords ?? []);
+        } catch (error) {
+            console.error("최근 검색어 조회 실패", error);
+            setRecent([]);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            loadRecentKeywords();
+        }, [])
+    );
+
     const onSubmit = () => {
         if (!canSubmit) return;
+
         router.push({
             pathname: "/(home)/homesearchresult",
             params: { q: q.trim() },
+        });
+    };
+
+    const onPressRecentKeyword = (keyword: string) => {
+        router.push({
+            pathname: "/(home)/homesearchresult",
+            params: { q: keyword },
         });
     };
 
@@ -40,34 +62,34 @@ export default function HomeSearchScreen() {
 
             <View style={styles.sectionHead}>
                 <Text style={styles.sectionTitle}>최근 검색어</Text>
-                <Pressable onPress={() => setRecent([])}>
+                <Pressable onPress={() => {}}>
                     <Text style={styles.clear}>지우기</Text>
                 </Pressable>
             </View>
 
             <FlatList
                 data={recent}
-                keyExtractor={(_, i) => String(i)}
+                keyExtractor={(item, index) => `${item.keyword}-${index}`}
                 contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 20 }}
                 ItemSeparatorComponent={() => <View style={styles.sep} />}
-                renderItem={({ item, index }) => (
+                ListEmptyComponent={
+                    <Text style={styles.emptyText}>최근 검색어가 없습니다.</Text>
+                }
+                renderItem={({ item }) => (
                     <View style={styles.row}>
                         <Pressable
                             style={styles.rowLeft}
-                            onPress={() =>
-                                router.push({
-                                    pathname: "/(home)/homesearchresult",
-                                    params: { q: item },
-                                })
-                            }
+                            onPress={() => onPressRecentKeyword(item.keyword)}
                         >
-                            <Ionicons name="time-outline" size={16} color={COLORS.neutralDark} />
-                            <Text style={styles.rowText}>{item}</Text>
+                            <Ionicons
+                                name="time-outline"
+                                size={16}
+                                color={COLORS.neutralDark}
+                            />
+                            <Text style={styles.rowText}>{item.keyword}</Text>
                         </Pressable>
 
-                        <Pressable
-                            onPress={() => setRecent((prev) => prev.filter((_, i) => i !== index))}
-                        >
+                        <Pressable onPress={() => {}}>
                             <Ionicons name="close" size={18} color={COLORS.neutralDark} />
                         </Pressable>
                     </View>
@@ -102,16 +124,41 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         justifyContent: "space-between",
     },
-    sectionTitle: { fontSize: 12, fontWeight: "900", color: COLORS.primaryDark },
-    clear: { fontSize: 12, fontWeight: "800", color: COLORS.neutralDark },
+    sectionTitle: {
+        fontSize: 12,
+        fontWeight: "900",
+        color: COLORS.primaryDark,
+    },
+    clear: {
+        fontSize: 12,
+        fontWeight: "800",
+        color: COLORS.neutralDark,
+    },
 
-    sep: { height: 1, backgroundColor: COLORS.border, marginHorizontal: 18 },
+    sep: {
+        height: 1,
+        backgroundColor: COLORS.border,
+        marginHorizontal: 18,
+    },
     row: {
         paddingVertical: 12,
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "center",
     },
-    rowLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-    rowText: { fontSize: 13, fontWeight: "700", color: COLORS.primary },
+    rowLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    rowText: {
+        fontSize: 13,
+        fontWeight: "700",
+        color: COLORS.primary,
+    },
+    emptyText: {
+        paddingTop: 12,
+        fontSize: 13,
+        color: COLORS.neutralDark,
+    },
 });

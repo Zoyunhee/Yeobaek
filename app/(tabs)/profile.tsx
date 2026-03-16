@@ -12,6 +12,10 @@ import {
     getWishlist,
     getReadingNotes,
     getReadCompletions,
+    getThinkingStyleStats,
+    getActivityStats,
+    getEmotionGenreStats,
+    getAvailableGenres,
 } from "@/services/api";
 
 type Book = { id: string; title: string; author: string; createdAt?: string; coverUrl?: string };
@@ -19,10 +23,32 @@ type CompletedChat = { id: string; createdAt?: string; coverUrl?: string };
 type Note = { id: string; createdAt?: string; coverUrl?: string };
 type ChatEvent = { id: string; createdAt: string };
 
+type ThinkingStyleApi = {
+    critic: number;
+    emotion: number;
+    analysis: number;
+    empathy: number;
+    creative: number;
+};
+
+type PreviewEmotionItem = {
+    emoji: string;
+    percent: number;
+};
+
 const MONTHLY_CHAT_EVENTS_KEY = "monthly_chat_events_v1";
 
 const DEFAULT_AVATAR = require("../../assets/images/default-avatar.png");
 const BOOK_COVER = require("../../assets/images/book-cover.png");
+
+const EMOTION_ITEMS = [
+    { key: "EXCITED", emoji: "🤩" },
+    { key: "HAPPY", emoji: "😊" },
+    { key: "CALM", emoji: "🙂" },
+    { key: "ANXIOUS", emoji: "😟" },
+    { key: "SAD", emoji: "😢" },
+    { key: "ANGRY", emoji: "😠" },
+] as const;
 
 function monthRange(now = new Date()) {
     const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
@@ -45,14 +71,6 @@ function pickLatest<T extends { createdAt?: string }>(arr: T[]) {
     return [...withDate].sort((a, b) => +new Date(b.createdAt!) - +new Date(a.createdAt!))[0];
 }
 
-function makePreviewLine() {
-    return [8, 6, 7, 10, 15, 14, 11];
-}
-
-function makePreviewEmotions() {
-    return { happy: 60, sad: 30, neutral: 10 };
-}
-
 function mapGenreToKorean(genre: string) {
     const map: Record<string, string> = {
         ROMANCE: "로맨스",
@@ -71,6 +89,17 @@ function mapGenreToKorean(genre: string) {
         SELF_DEVELOPMENT: "자기계발",
         BUSINESS: "경제 경영",
         SCIENCE: "과학",
+        소설: "소설",
+        시: "시",
+        경제경영: "경제경영",
+        역사: "역사",
+        예술: "예술",
+        IT: "IT",
+        아동: "아동",
+        청소년: "청소년",
+        여행: "여행",
+        건강: "건강",
+        기타: "기타",
     };
     return map[genre] ?? genre;
 }
@@ -87,10 +116,88 @@ function mapReadingStyleToKorean(style: string) {
     return map[style] ?? style;
 }
 
+function getTopThinkingStyleLabel(data: ThinkingStyleApi | null) {
+    if (!data) return "분석 중";
+
+    const entries = [
+        { label: "비평형", value: data.critic },
+        { label: "감정형", value: data.emotion },
+        { label: "분석형", value: data.analysis },
+        { label: "공감형", value: data.empathy },
+        { label: "창의형", value: data.creative },
+    ].sort((a, b) => b.value - a.value);
+
+    return entries[0]?.label ?? "분석 중";
+}
+
+function buildPreviewEmotions(
+    apiSlices: Array<{ label: string; value: number }> = []
+): { top1: string; items: PreviewEmotionItem[] } {
+    const valueMap = new Map<string, number>();
+
+    for (const slice of apiSlices) {
+        valueMap.set(String(slice.label), Number(slice.value) || 0);
+    }
+
+    const fixed = EMOTION_ITEMS.map((item) => ({
+        emoji: item.emoji,
+        value: valueMap.get(item.key) ?? 0,
+    }));
+
+    const total = fixed.reduce((sum, item) => sum + item.value, 0);
+
+    if (total === 0) {
+        return {
+            top1: "🙂",
+            items: [
+                { emoji: "🙂", percent: 100 },
+                { emoji: "😊", percent: 0 },
+                { emoji: "😢", percent: 0 },
+            ],
+        };
+    }
+
+    const top3 = [...fixed]
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 3)
+        .map((item) => ({
+            emoji: item.emoji,
+            percent: Math.round((item.value / total) * 100),
+        }));
+
+    return {
+        top1: top3[0]?.emoji ?? "🙂",
+        items: top3,
+    };
+}
+
+function buildMiniLine(activity: Array<{ hour: number; participationScore: number }> = []) {
+    const fixedHours = [0, 4, 8, 12, 16, 20, 23];
+
+    return fixedHours.map((hour) => {
+        const found = activity.find((item) => item.hour === hour);
+        return found ? Math.round(found.participationScore) : 0;
+    });
+}
+
+function countRecent7DaysChats(completions: CompletedChat[]) {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(now.getDate() - 7);
+    start.setHours(0, 0, 0, 0);
+
+    return completions.filter((item) => {
+        if (!item.createdAt) return false;
+        const d = new Date(item.createdAt);
+        if (Number.isNaN(d.getTime())) return false;
+        return d >= start && d <= now;
+    }).length;
+}
+
 export default function ProfileScreen() {
     const router = useRouter();
 
-    const [nickname, setNickname] = useState("은석");
+    const [nickname, setNickname] = useState("사용자");
     const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
     const [genres, setGenres] = useState<string[]>([]);
@@ -100,6 +207,14 @@ export default function ProfileScreen() {
     const [completedChats, setCompletedChats] = useState<CompletedChat[]>([]);
     const [notes, setNotes] = useState<Note[]>([]);
     const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
+
+    const [thinkingStylePreview, setThinkingStylePreview] = useState("분석 중");
+    const [weeklyChats, setWeeklyChats] = useState(0);
+    const [emotionTop1, setEmotionTop1] = useState("🙂");
+    const [emotionPreview, setEmotionPreview] = useState<PreviewEmotionItem[]>([
+        { emoji: "🙂", percent: 100 },
+    ]);
+    const [miniLine, setMiniLine] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
 
     const load = useCallback(async () => {
         try {
@@ -111,51 +226,105 @@ export default function ProfileScreen() {
 
             const userId = Number(userIdRaw);
 
-            const [profileRes, wishlistRes, notesRes, completionsRes, eventRaw] = await Promise.all([
+            const [
+                profileRes,
+                wishlistRes,
+                notesRes,
+                completionsRes,
+                eventRaw,
+                thinkingRes,
+                activityRes,
+                genresRes,
+            ] = await Promise.all([
                 getMyProfile(userId),
                 getWishlist(userId),
                 getReadingNotes(userId),
                 getReadCompletions(userId),
                 AsyncStorage.getItem(MONTHLY_CHAT_EVENTS_KEY),
+                getThinkingStyleStats(),
+                getActivityStats(),
+                getAvailableGenres(),
             ]);
 
             const profile = profileRes.data;
 
-            setNickname(profile.nickname || "은석");
+            setNickname(profile.nickname || "사용자");
             setAvatarUri(profile.profileImage || null);
             setGenres((profile.genres || []).map(mapGenreToKorean));
             setStylesPref((profile.readingStyles || []).map(mapReadingStyleToKorean));
 
-            setLikedBooks(
-                (wishlistRes.data || []).map((item) => ({
-                    id: String(item.id),
-                    title: item.bookTitle,
-                    author: item.author || "",
-                    createdAt: item.createdAt,
-                    coverUrl: item.coverImage,
-                }))
-            );
+            const liked = (wishlistRes.data || []).map((item) => ({
+                id: String(item.id),
+                title: item.bookTitle,
+                author: item.author || "",
+                createdAt: item.createdAt,
+                coverUrl: item.coverImage,
+            }));
+            setLikedBooks(liked);
 
-            setNotes(
-                (notesRes.data || []).map((item) => ({
-                    id: String(item.id),
-                    createdAt: item.createdAt,
-                    coverUrl: item.coverImage,
-                }))
-            );
+            const noteList = (notesRes.data || []).map((item) => ({
+                id: String(item.id),
+                createdAt: item.createdAt,
+                coverUrl: item.coverImage,
+            }));
+            setNotes(noteList);
 
-            setCompletedChats(
-                (completionsRes.data || []).map((item) => ({
-                    id: String(item.id),
-                    createdAt: item.completedAt,
-                    coverUrl: item.bookCover,
-                }))
-            );
+            const completions = (completionsRes.data || []).map((item) => ({
+                id: String(item.id),
+                createdAt: item.completedAt,
+                coverUrl: item.bookCover,
+            }));
+            setCompletedChats(completions);
 
             try {
                 setChatEvents(eventRaw ? (JSON.parse(eventRaw) as ChatEvent[]) : []);
             } catch {
                 setChatEvents([]);
+            }
+
+            setThinkingStylePreview(getTopThinkingStyleLabel(thinkingRes.data));
+            setWeeklyChats(countRecent7DaysChats(completions));
+            setMiniLine(buildMiniLine(activityRes.data || []));
+
+            const availableGenres = (genresRes.data || []).filter(Boolean);
+
+            if (availableGenres.length === 0) {
+                setEmotionTop1("🙂");
+                setEmotionPreview([
+                    { emoji: "🙂", percent: 100 },
+                    { emoji: "😊", percent: 0 },
+                    { emoji: "😢", percent: 0 },
+                ]);
+            } else {
+                const emotionResults = await Promise.all(
+                    availableGenres.map((g) =>
+                        getEmotionGenreStats({
+                            mode: "GENRE_TO_EMOTION",
+                            genre: g,
+                        })
+                    )
+                );
+
+                const mergedMap = new Map<string, number>();
+
+                for (const res of emotionResults) {
+                    const slices = res.data?.slices || [];
+
+                    for (const slice of slices) {
+                        const label = String(slice.label);
+                        const value = Number(slice.value) || 0;
+                        mergedMap.set(label, (mergedMap.get(label) ?? 0) + value);
+                    }
+                }
+
+                const mergedSlices = Array.from(mergedMap.entries()).map(([label, value]) => ({
+                    label,
+                    value,
+                }));
+
+                const preview = buildPreviewEmotions(mergedSlices);
+                setEmotionTop1(preview.top1);
+                setEmotionPreview(preview.items);
             }
         } catch (error) {
             const message =
@@ -203,11 +372,6 @@ export default function ProfileScreen() {
         if (!latest) return null;
         return latest.coverUrl ? { uri: latest.coverUrl } : BOOK_COVER;
     }, [notes]);
-
-    const thinkingStyle = "사색형";
-    const weeklyChats = 0;
-    const emotions = useMemo(() => makePreviewEmotions(), []);
-    const line = useMemo(() => makePreviewLine(), []);
 
     return (
         <SafeAreaView style={styles.safe}>
@@ -269,20 +433,22 @@ export default function ProfileScreen() {
                     <View style={styles.cardLine} />
 
                     <View style={previewStyles.bullets}>
-                        <BulletRow title="사고 스타일" value={thinkingStyle} />
-                        <BulletRow title="최근 감정 Top1" value="😁" />
+                        <BulletRow title="사고 스타일" value={thinkingStylePreview} />
+                        <BulletRow title="최근 감정 Top1" value={emotionTop1} />
 
                         <View style={previewStyles.emojiRow}>
-                            <Text style={previewStyles.emojiItem}>😁 {emotions.happy}%</Text>
-                            <Text style={previewStyles.emojiItem}>😭 {emotions.sad}%</Text>
-                            <Text style={previewStyles.emojiItem}>😶 {emotions.neutral}%</Text>
+                            {emotionPreview.map((item, idx) => (
+                                <Text key={`${item.emoji}-${idx}`} style={previewStyles.emojiItem}>
+                                    {item.emoji} {item.percent}%
+                                </Text>
+                            ))}
                         </View>
 
                         <BulletRow title="최근 7일 채팅" value={`${weeklyChats}회`} />
                     </View>
 
                     <Text style={previewStyles.miniTitle}>[ 미니 채팅 시간 그래프 ]</Text>
-                    <MiniLineChart values={line} />
+                    <MiniLineChart values={miniLine} />
                 </Pressable>
             </ScrollView>
         </SafeAreaView>
@@ -565,6 +731,7 @@ const previewStyles = StyleSheet.create({
         flexDirection: "row",
         justifyContent: "center",
         gap: 14,
+        flexWrap: "wrap",
     },
     emojiItem: {
         fontSize: 13,

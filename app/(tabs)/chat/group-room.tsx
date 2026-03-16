@@ -1,6 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, FlatList, KeyboardAvoidingView, Platform, Pressable, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import {
+    Alert,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    Text,
+    View,
+} from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -44,11 +53,15 @@ async function getCurrentUser(): Promise<StoredUser | null> {
 export default function GroupRoomScreen() {
     const router = useRouter();
     const { roomId } = useLocalSearchParams<{ roomId: string }>();
+    const insets = useSafeAreaInsets();
 
     const [room, setRoom] = useState<DiscussionRoom | null>(null);
     const [messages, setMessages] = useState<DiscussionMessage[]>([]);
     const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
+    const [keyboardVisible, setKeyboardVisible] = useState(false);
+
     const clientRef = useRef<Client | null>(null);
+    const listRef = useRef<FlatList<DiscussionMessage>>(null);
 
     useEffect(() => {
         let mounted = true;
@@ -106,10 +119,33 @@ export default function GroupRoomScreen() {
         };
     }, [roomId]);
 
+    useEffect(() => {
+        const showSub = Keyboard.addListener("keyboardWillShow", () => {
+            setKeyboardVisible(true);
+        });
+
+        const hideSub = Keyboard.addListener("keyboardWillHide", () => {
+            setKeyboardVisible(false);
+        });
+
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
+
     const roomMessages = useMemo(
         () => messages.filter((m) => String(m.discussionRoomId) === String(roomId)),
         [messages, roomId]
     );
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            listRef.current?.scrollToEnd({ animated: true });
+        }, 50);
+
+        return () => clearTimeout(timer);
+    }, [roomMessages.length]);
 
     if (!room) return null;
 
@@ -136,7 +172,6 @@ export default function GroupRoomScreen() {
                 {
                     text: "이어하기",
                     style: "cancel",
-                    onPress: () => {},
                 },
                 {
                     text: "종료 후 완료 채팅에 저장하기",
@@ -178,49 +213,93 @@ export default function GroupRoomScreen() {
     };
 
     return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
-            <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-                <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                        <Pressable onPress={openExitDialog} hitSlop={10}>
-                            <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
-                        </Pressable>
+        <SafeAreaView
+            style={{ flex: 1, backgroundColor: COLORS.bg }}
+            edges={["top", "left", "right"]}
+        >
+            <KeyboardAvoidingView
+                style={{ flex: 1 }}
+                behavior="padding"
+                keyboardVerticalOffset={0}
+            >
+                <View style={{ flex: 1 }}>
+                    <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 }}>
+                        <View
+                            style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                            }}
+                        >
+                            <Pressable onPress={openExitDialog} hitSlop={10}>
+                                <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
+                            </Pressable>
 
-                        <Text style={{ color: COLORS.primary, fontWeight: "900" }}>{room.bookTitle}</Text>
+                            <Text style={{ color: COLORS.primary, fontWeight: "900" }}>
+                                {room.bookTitle}
+                            </Text>
 
-                        <View style={{ width: 22 }} />
+                            <View style={{ width: 22 }} />
+                        </View>
+
+                        <View
+                            style={{
+                                marginTop: 10,
+                                backgroundColor: COLORS.white,
+                                borderWidth: 1,
+                                borderColor: COLORS.border,
+                                padding: 10,
+                                borderRadius: 6,
+                            }}
+                        >
+                            <Text
+                                style={{ color: COLORS.primaryDark, fontWeight: "800" }}
+                                numberOfLines={1}
+                            >
+                                “{room.description ?? ""}”
+                            </Text>
+                        </View>
                     </View>
+
+                    <FlatList
+                        ref={listRef}
+                        data={roomMessages}
+                        style={{ flex: 1 }}
+                        keyExtractor={(it, idx) => `${it.createdAt ?? "msg"}-${idx}`}
+                        contentContainerStyle={{
+                            paddingHorizontal: 16,
+                            paddingBottom: 12,
+                        }}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="interactive"
+                        onContentSizeChange={() => {
+                            listRef.current?.scrollToEnd({ animated: false });
+                        }}
+                        renderItem={({ item }) => (
+                            <MessageBubble
+                                isMe={item.sender?.id === currentUser?.id}
+                                text={item.content}
+                                senderName={
+                                    item.sender?.id !== currentUser?.id ? item.sender?.nickname : undefined
+                                }
+                                variant="group"
+                            />
+                        )}
+                    />
 
                     <View
                         style={{
-                            marginTop: 10,
-                            backgroundColor: COLORS.white,
-                            borderWidth: 1,
-                            borderColor: COLORS.border,
-                            padding: 10,
-                            borderRadius: 6,
+                            paddingHorizontal: 16,
+                            paddingTop: 8,
+                            paddingBottom: keyboardVisible ? 8 : Math.max(insets.bottom, 8),
+                            backgroundColor: COLORS.bg,
+                            borderTopWidth: 1,
+                            borderTopColor: COLORS.border,
                         }}
                     >
-                        <Text style={{ color: COLORS.primaryDark, fontWeight: "800" }} numberOfLines={1}>
-                            “{room.description ?? ""}”
-                        </Text>
+                        <ChatInput onSend={onSend} />
                     </View>
                 </View>
-
-                <FlatList
-                    data={roomMessages}
-                    keyExtractor={(it, idx) => `${it.createdAt ?? "msg"}-${idx}`}
-                    contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}
-                    renderItem={({ item }) => (
-                        <MessageBubble
-                            isMe={item.sender?.id === currentUser?.id}
-                            text={item.content}
-                            senderName={item.sender?.id !== currentUser?.id ? item.sender?.nickname : undefined}
-                        />
-                    )}
-                />
-
-                <ChatInput onSend={onSend} />
             </KeyboardAvoidingView>
         </SafeAreaView>
     );

@@ -238,6 +238,7 @@ export default function AiRoomScreen() {
                                 isMe={item.sender === "ME"}
                                 text={item.text}
                                 senderName={item.sender === "AI" ? "AI" : undefined}
+                                variant="ai"
                             />
                         )}
                     />

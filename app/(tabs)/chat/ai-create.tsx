@@ -19,7 +19,6 @@ import {
     createAiRoom,
     getBookGenre,
     saveBook,
-    saveEmotionLog,
     searchBooks,
 } from "@/services/api";
 
@@ -118,12 +117,6 @@ export default function AiCreateScreen() {
             });
 
             const roomId = roomRes.roomId;
-
-            // 4) 감정 로그 저장
-            await saveEmotionLog({
-                roomId,
-                emotionId: selectedEmotionId,
-            });
 
             // 5) 채팅방으로 이동
             router.replace({

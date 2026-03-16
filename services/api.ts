@@ -403,11 +403,31 @@ export interface BookSearchItem {
     genre?: string;
 }
 
+export interface HomeBookSearchItem {
+    id?: number;
+    isbn: string;
+    title: string;
+    authors: string[];
+    publisher: string;
+    publishedDate?: string;
+    description?: string;
+    thumbnailUrl?: string;
+    price?: number;
+    salePrice?: number;
+    url?: string;
+}
+
 export interface BookGenreResponse {
     isbn: string;
     rawCategoryId?: number | null;
     rawCategoryName?: string | null;
     genre: string;
+}
+
+export interface SearchKeywordItem {
+    keyword: string;
+    searchCount: number;
+    lastSearchedAt: string;
 }
 
 export async function searchBooks(query: string, page = 1, size = 10) {
@@ -425,6 +445,35 @@ export async function searchBooks(query: string, page = 1, size = 10) {
         totalCount: number;
         items: BookSearchItem[];
     }>(`/api/books/search?${params.toString()}`);
+}
+
+export async function searchHomeBooks(query: string, page = 1, size = 10) {
+    const params = new URLSearchParams({
+        query,
+        page: String(page),
+        size: String(size),
+    });
+
+    return apiFetch<{
+        success: boolean;
+        data: {
+            books: HomeBookSearchItem[];
+            currentPage: number;
+            pageSize: number;
+            totalCount: number;
+            isEnd: boolean;
+        };
+    }>(`/api/home/books/search?${params.toString()}`);
+}
+
+export async function getHomeSearchKeywords(limit = 10) {
+    return apiFetch<{
+        success: boolean;
+        data: {
+            popularKeywords: SearchKeywordItem[];
+            recentKeywords: SearchKeywordItem[];
+        };
+    }>(`/api/home/books/keywords?limit=${limit}`);
 }
 
 export async function getBookGenre(isbn: string) {
@@ -454,7 +503,7 @@ export async function saveBook(params: {
    분석/감정 관련
 ========================= */
 
-export async function saveEmotionLog(params: {
+/*export async function saveEmotionLog(params: { 안 씀
     roomId: number;
     emotionId: number;
     selectedAt?: string;
@@ -472,7 +521,7 @@ export async function saveEmotionLog(params: {
         method: "POST",
         body: JSON.stringify(params),
     });
-}
+}*/
 
 export async function getThinkingStyleStats(year?: number | null, month?: number | null) {
     const params = new URLSearchParams();
@@ -604,6 +653,7 @@ export async function createAiRoom(params: {
 
 export async function getAiRooms(status?: "IN_PROGRESS" | "FINISHED") {
     const query = status ? `?status=${status}` : "";
+
     return apiFetch<{
         success: boolean;
         data: AiRoomSummary[];
@@ -948,4 +998,13 @@ export async function getDiscussionMessages(roomId: number) {
         success: boolean;
         data: DiscussionMessage[];
     }>(`/api/book-discussions/${roomId}/messages`);
+}
+
+
+/* 자가진단 */
+export async function getAvailableGenres() {
+    return apiFetch<{
+        success: boolean;
+        data: string[];
+    }>("/api/books/genres");
 }

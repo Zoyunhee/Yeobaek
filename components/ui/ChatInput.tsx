@@ -1,6 +1,5 @@
-// components/ui/ChatInput.tsx
 import React, { useMemo, useState } from "react";
-import { Keyboard, Pressable, TextInput, View } from "react-native";
+import { Pressable, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 
@@ -16,7 +15,10 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
     const minH = 34;
     const maxH = 84;
 
-    const inputH = useMemo(() => Math.min(maxH, Math.max(minH, contentH + 10)), [contentH]);
+    const inputH = useMemo(
+        () => Math.min(maxH, Math.max(minH, contentH + 10)),
+        [contentH]
+    );
 
     const send = () => {
         const t = value.trim();
@@ -24,7 +26,6 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
         onSend(t);
         setValue("");
         setContentH(18);
-        Keyboard.dismiss();
     };
 
     return (
@@ -32,10 +33,8 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
             style={{
                 flexDirection: "row",
                 gap: 10,
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                borderTopWidth: 1,
-                borderTopColor: COLORS.border,
+                paddingHorizontal: 0,
+                paddingVertical: 0,
                 backgroundColor: COLORS.bg,
                 alignItems: "flex-end",
             }}
@@ -65,10 +64,12 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
                         height: inputH,
                         padding: 0,
                         margin: 0,
+                        textAlignVertical: "top",
                     }}
                     onContentSizeChange={(e) => setContentH(e.nativeEvent.contentSize.height)}
                     returnKeyType="send"
                     blurOnSubmit={false}
+                    onSubmitEditing={send}
                 />
             </View>
 

@@ -62,8 +62,10 @@ export default function GroupLobbyScreen() {
                 setCurrentUser(user);
                 await joinDiscussionRoom(Number(roomId), user.id);
                 await loadRoomAndParticipants(user.id);
-            } catch (error) {
-                console.error("그룹 로비 입장 실패:", error);
+            } catch (error: any) {
+                if (String(error?.message ?? error).includes("이미 참여 중")) {
+                    return;
+                }
             }
         }
 
