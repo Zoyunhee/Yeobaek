@@ -1,175 +1,166 @@
-import React, { useCallback, useState } from "react";
-import {
-    View,
-    Text,
-    FlatList,
-    Pressable,
-    ActivityIndicator,
-    StyleSheet,
-} from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
-import { getDiscussionRooms, DiscussionRoom } from "@/services/api";
+import React, { useEffect, useMemo, useState } from "react";
+import { FlatList, Pressable, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 
-export default function ChatIndexScreen() {
+import { COLORS } from "@/constants/colors";
+import SegmentedToggle from "@/components/ui/SegmentedToggle";
+import ChatListItem from "@/components/ui/ChatListItem";
+import { useChatStore } from "@/src/chat/store";
+import type { AiRoom } from "@/src/chat/types";
+import { getDiscussionRooms, type DiscussionRoom } from "@/services/api";
+
+type ChatMode = "AI" | "GROUP";
+
+type GroupRoomView = {
+    id: string;
+    bookTitle: string;
+    topic: string;
+    coverUrl?: string;
+    joinedPeople: number;
+    maxPeople: number;
+    startAt: string;
+    status: "WAITING" | "IN_PROGRESS" | "FINISHED";
+};
+
+const formatTime = (iso?: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
+const formatDateTime = (iso?: string) => {
+    if (!iso) return "";
+    return new Date(iso).toLocaleString();
+};
+
+function mapRoom(r: DiscussionRoom): GroupRoomView {
+    return {
+        id: String(r.id),
+        bookTitle: r.bookTitle,
+        topic: r.description ?? "",
+        coverUrl: r.bookCover,
+        joinedPeople: r.currentParticipants,
+        maxPeople: r.maxParticipants,
+        startAt: r.discussionStartTime,
+        status: r.status,
+    };
+}
+
+export default function ChatMainScreen() {
     const router = useRouter();
+    const [mode, setMode] = useState<ChatMode>("AI");
+    const { aiRooms } = useChatStore();
+    const [groupRooms, setGroupRooms] = useState<GroupRoomView[]>([]);
 
-    const [rooms, setRooms] = useState<DiscussionRoom[]>([]);
-    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        let mounted = true;
 
-    const loadRooms = useCallback(async () => {
-        try {
-            setLoading(true);
-            const res = await getDiscussionRooms();
-
-            if (res.success) {
-                setRooms((res.data ?? []).filter((room) => room.status !== "FINISHED"));
-            } else {
-                setRooms([]);
+        async function loadRooms() {
+            try {
+                const res = await getDiscussionRooms();
+                if (!mounted || !res.success) return;
+                setGroupRooms((res.data ?? []).map(mapRoom));
+            } catch (error) {
+                console.error("그룹 채팅 목록 조회 실패:", error);
             }
-        } catch (error) {
-            console.error("그룹채팅 목록 조회 실패:", error);
-            setRooms([]);
-        } finally {
-            setLoading(false);
         }
-    }, []);
 
-    useFocusEffect(
-        useCallback(() => {
+        if (mode === "GROUP") {
             loadRooms();
-        }, [loadRooms])
+        }
+
+        return () => {
+            mounted = false;
+        };
+    }, [mode]);
+
+    const visibleGroupRooms = useMemo(
+        () => groupRooms.filter((r) => r.status !== "FINISHED"),
+        [groupRooms]
     );
 
-    return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>그룹 채팅</Text>
+    const data: (AiRoom | GroupRoomView)[] = mode === "AI" ? aiRooms : visibleGroupRooms;
 
-                <Pressable
-                    style={styles.createButton}
-                    onPress={() => router.push("/(tabs)/chat/group-create")}
-                >
-                    <Text style={styles.createButtonText}>방 만들기</Text>
-                </Pressable>
+    return (
+        <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                    <Text style={{ color: COLORS.primary, fontSize: 22, fontWeight: "900" }}>여백 餘白</Text>
+
+                    {mode === "AI" ? (
+                        <Pressable onPress={() => router.push("/(tabs)/chat/ai-create")}>
+                            <Ionicons name="add" size={22} color={COLORS.primary} />
+                        </Pressable>
+                    ) : (
+                        <View style={{ flexDirection: "row", gap: 14 }}>
+                            <Pressable onPress={() => router.push("/(tabs)/chat/group-search")}>
+                                <Ionicons name="search" size={20} color={COLORS.primary} />
+                            </Pressable>
+                            <Pressable onPress={() => router.push("/(tabs)/chat/group-create")}>
+                                <Ionicons name="add" size={22} color={COLORS.primary} />
+                            </Pressable>
+                        </View>
+                    )}
+                </View>
+
+                <SegmentedToggle
+                    leftLabel="AI 채팅"
+                    rightLabel="그룹 채팅"
+                    value={mode}
+                    leftValue="AI"
+                    rightValue="GROUP"
+                    onChange={setMode}
+                />
             </View>
 
-            {loading ? (
-                <ActivityIndicator size="large" style={{ marginTop: 40 }} />
-            ) : (
-                <FlatList
-                    data={rooms}
-                    keyExtractor={(item) => String(item.id)}
-                    contentContainerStyle={{ paddingBottom: 24 }}
-                    ListEmptyComponent={
-                        <View style={styles.emptyBox}>
-                            <Text style={styles.emptyText}>아직 생성된 그룹방이 없어요.</Text>
-                        </View>
+            <FlatList
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 18 }}
+                data={data}
+                keyExtractor={(it) => it.id}
+                renderItem={({ item }) => {
+                    if (mode === "AI") {
+                        const r = item as AiRoom;
+                        return (
+                            <ChatListItem
+                                title={r.bookTitle}
+                                subtitle={r.lastMessage?.trim() ? r.lastMessage : "대화를 시작해보세요"}
+                                coverUrl={r.coverUrl}
+                                rightTopText={formatTime(r.lastAt)}
+                                rightBottomText={r.status === "IN_PROGRESS" ? "진행중" : ""}
+                                onPress={() =>
+                                    router.push({
+                                        pathname: "/(tabs)/chat/ai-room",
+                                        params: { roomId: r.id },
+                                    } as any)
+                                }
+                            />
+                        );
                     }
-                    renderItem={({ item }) => (
-                        <Pressable
-                            style={styles.card}
+
+                    const r = item as GroupRoomView;
+                    return (
+                        <ChatListItem
+                            title={r.bookTitle}
+                            subtitle={r.topic}
+                            coverUrl={r.coverUrl}
+                            metaDirection="row"
+                            meta={[
+                                { icon: "👥", text: `${r.joinedPeople} / ${r.maxPeople} 명` },
+                                { icon: "🕒", text: formatDateTime(r.startAt) },
+                            ]}
                             onPress={() =>
                                 router.push({
                                     pathname: "/(tabs)/chat/group-detail",
-                                    params: { roomId: String(item.id) },
-                                })
+                                    params: { roomId: r.id },
+                                } as any)
                             }
-                        >
-                            <Text style={styles.bookTitle}>{item.bookTitle}</Text>
-                            <Text style={styles.author}>{item.bookAuthor}</Text>
-
-                            <Text style={styles.desc}>
-                                {item.description || "설명이 없습니다."}
-                            </Text>
-
-                            <View style={styles.metaRow}>
-                                <Text style={styles.metaText}>
-                                    인원 {item.currentParticipants}/{item.maxParticipants}
-                                </Text>
-                                <Text style={styles.metaText}>
-                                    상태 {item.status}
-                                </Text>
-                            </View>
-
-                            <Text style={styles.timeText}>
-                                시작 시간: {new Date(item.discussionStartTime).toLocaleString()}
-                            </Text>
-                        </Pressable>
-                    )}
-                />
-            )}
-        </View>
+                        />
+                    );
+                }}
+            />
+        </SafeAreaView>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        padding: 16,
-        backgroundColor: "#fff",
-    },
-    header: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: 16,
-    },
-    title: {
-        fontSize: 24,
-        fontWeight: "700",
-    },
-    createButton: {
-        backgroundColor: "#222",
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: 10,
-    },
-    createButtonText: {
-        color: "#fff",
-        fontWeight: "600",
-    },
-    card: {
-        borderWidth: 1,
-        borderColor: "#ddd",
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 12,
-        backgroundColor: "#fafafa",
-    },
-    bookTitle: {
-        fontSize: 18,
-        fontWeight: "700",
-        marginBottom: 4,
-    },
-    author: {
-        fontSize: 14,
-        color: "#666",
-        marginBottom: 8,
-    },
-    desc: {
-        fontSize: 14,
-        color: "#333",
-        marginBottom: 10,
-    },
-    metaRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        marginBottom: 8,
-    },
-    metaText: {
-        fontSize: 13,
-        color: "#555",
-    },
-    timeText: {
-        fontSize: 12,
-        color: "#888",
-    },
-    emptyBox: {
-        paddingVertical: 60,
-        alignItems: "center",
-    },
-    emptyText: {
-        color: "#777",
-        fontSize: 14,
-    },
-});

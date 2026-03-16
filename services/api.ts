@@ -757,12 +757,24 @@ export interface DiscussionRoom {
     id: number;
     bookTitle: string;
     bookAuthor: string;
+    bookIsbn?: string;
+    bookCover?: string;
+    bookPublisher?: string;
     description?: string;
     maxParticipants: number;
     currentParticipants: number;
     discussionStartTime: string;
+    estimatedDurationMinutes?: number;
+    estimatedEndTime?: string;
     status: DiscussionStatus;
     discussionRules: string[];
+    host?: {
+        id: number;
+        userId: string;
+        nickname: string;
+    };
+    createdAt?: string;
+    updatedAt?: string;
 }
 
 export interface DiscussionParticipant {
@@ -770,9 +782,11 @@ export interface DiscussionParticipant {
     nickname: string;
     role: "HOST" | "PARTICIPANT";
     isReady: boolean;
+    joinedAt?: string;
 }
 
 export interface DiscussionMessage {
+    id?: number;
     discussionRoomId: number;
     type: DiscussionMessageType;
     content: string;
@@ -782,6 +796,15 @@ export interface DiscussionMessage {
         nickname: string;
     };
     createdAt?: string;
+}
+
+export interface ToggleDiscussionReadyResponse {
+    userId?: number;
+    nickname?: string;
+    isReady: boolean;
+    allReady: boolean;
+    roomStatus: DiscussionStatus;
+    starting?: boolean;
 }
 
 /* 방 목록 */
@@ -834,6 +857,7 @@ export async function createDiscussionRoom(params: {
     description?: string;
     maxParticipants: number;
     discussionStartTime: string;
+    estimatedDurationMinutes: number;
     hostId: number;
     discussionRules: string[];
 }) {
@@ -847,7 +871,7 @@ export async function createDiscussionRoom(params: {
     });
 }
 
-/* 방 참가 */
+/* 방 입장 */
 export async function joinDiscussionRoom(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
@@ -868,21 +892,18 @@ export async function leaveDiscussionRoom(roomId: number, userId: number) {
     });
 }
 
-/* 준비 토글 */
+/* READY 상태 토글 */
 export async function toggleDiscussionReady(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
         message: string;
-        data: {
-            roomStatus: DiscussionStatus;
-            allReady: boolean;
-        };
+        data: ToggleDiscussionReadyResponse;
     }>(`/api/book-discussions/${roomId}/ready?userId=${userId}`, {
         method: "POST",
     });
 }
 
-/* 강제 시작 */
+/* 방장 강제 시작 */
 export async function forceStartDiscussion(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;

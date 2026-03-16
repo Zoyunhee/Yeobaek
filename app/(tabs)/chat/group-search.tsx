@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -6,18 +6,70 @@ import { useRouter } from "expo-router";
 import { COLORS } from "@/constants/colors";
 import SearchBar from "@/components/ui/SearchBar";
 import ChatListItem from "@/components/ui/ChatListItem";
-import { useChatStore } from "@/src/chat/store";
+import { getDiscussionRooms, type DiscussionRoom } from "@/services/api";
+
+type GroupRoomView = {
+    id: string;
+    bookTitle: string;
+    topic: string;
+    author: string;
+    coverUrl?: string;
+    joinedPeople: number;
+    maxPeople: number;
+    startAt: string;
+    status: "WAITING" | "IN_PROGRESS" | "FINISHED";
+};
+
+function mapRoom(r: DiscussionRoom): GroupRoomView {
+    return {
+        id: String(r.id),
+        bookTitle: r.bookTitle,
+        topic: r.description ?? "",
+        author: r.bookAuthor,
+        coverUrl: r.bookCover,
+        joinedPeople: r.currentParticipants,
+        maxPeople: r.maxParticipants,
+        startAt: r.discussionStartTime,
+        status: r.status,
+    };
+}
 
 export default function GroupSearchScreen() {
     const router = useRouter();
-    const { groupRooms } = useChatStore();
+    const [groupRooms, setGroupRooms] = useState<GroupRoomView[]>([]);
     const [q, setQ] = useState("");
 
+    useEffect(() => {
+        let mounted = true;
+
+        async function loadRooms() {
+            try {
+                const res = await getDiscussionRooms();
+                if (!mounted || !res.success) return;
+                setGroupRooms((res.data ?? []).map(mapRoom));
+            } catch (error) {
+                console.error("그룹 검색 목록 조회 실패:", error);
+            }
+        }
+
+        loadRooms();
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
     const results = useMemo(() => {
-        const base = groupRooms.filter((r) => r.status !== "ENDED");
+        const base = groupRooms.filter((r) => r.status !== "FINISHED");
         const query = q.trim();
         if (!query) return base;
-        return base.filter((r) => r.bookTitle.includes(query) || r.topic.includes(query) || r.author.includes(query));
+
+        return base.filter(
+            (r) =>
+                r.bookTitle.includes(query) ||
+                r.topic.includes(query) ||
+                r.author.includes(query)
+        );
     }, [q, groupRooms]);
 
     return (
@@ -42,7 +94,12 @@ export default function GroupSearchScreen() {
                             metaLeft={`${r.joinedPeople} / ${r.maxPeople} 명`}
                             metaRight={new Date(r.startAt).toLocaleString()}
                             badge={r.status === "IN_PROGRESS" ? "진행중" : "모집중"}
-                            onPress={() => router.push({ pathname: "/(tabs)/chat/group-detail", params: { roomId: r.id } } as any)}
+                            onPress={() =>
+                                router.push({
+                                    pathname: "/(tabs)/chat/group-detail",
+                                    params: { roomId: r.id },
+                                } as any)
+                            }
                         />
                     ))}
                 </View>
