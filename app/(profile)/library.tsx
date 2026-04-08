@@ -7,125 +7,82 @@ import {
     FlatList,
     Image,
     Platform,
+    ActivityIndicator,
+    Alert,
 } from "react-native";
 import { Stack, useFocusEffect, useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import type { IconSymbolName } from "@/components/ui/icon-symbol";
+import {
+    getWishlist,
+    getReadCompletions,
+    getReadingNotes,
+} from "@/services/api";
 
 type TabKey = "liked" | "completed" | "notes";
 
-type Book = {
-    id: string;
-    title: string;
-    author: string;
-};
-
-type CompletedChat = {
-    id: string;
-    title: string;
-    subtitle: string; // "주인공 감정에 대해 토론해요" 같은 1줄
-    peopleText: string; // "2 / 4 명"
-    timeText: string; // "26.02.01 19:00"
-    lastMessage?: string; // 긴 텍스트
-    isDone?: boolean; // 완료 표시(빨간 점 등)
-};
-
-type Note = {
-    id: string;
-    bookTitle: string;
-    quote: string;
-    createdAt: string;
-};
-
-const LIKED_BOOKS_KEY = "liked_books_v1";
-const COMPLETED_CHATS_KEY = "completed_chats_v1";
-const NOTES_KEY = "reading_notes_v1";
-
 const BOOK_COVER = require("../../assets/images/book-cover.png");
 
-async function seedIfEmpty() {
-    const [b, c, n] = await Promise.all([
-        AsyncStorage.getItem(LIKED_BOOKS_KEY),
-        AsyncStorage.getItem(COMPLETED_CHATS_KEY),
-        AsyncStorage.getItem(NOTES_KEY),
-    ]);
+type LikedBook = {
+    id: number;
+    bookTitle: string;
+    author?: string;
+    coverImage?: string;
+};
 
-    if (!b) {
-        const books: Book[] = [
-            { id: "b1", title: "1퍼센트 부자들의 법칙", author: "글쓴이" },
-            { id: "b2", title: "1퍼센트 부자들의 법칙", author: "글쓴이" },
-            { id: "b3", title: "1퍼센트 부자들의 법칙", author: "글쓴이" },
-        ];
-        await AsyncStorage.setItem(LIKED_BOOKS_KEY, JSON.stringify(books));
-    }
+type CompletedItem = {
+    id: number;
+    bookTitle: string;
+    bookAuthor?: string;
+    bookCover?: string;
+    completionType: "AI_CHAT" | "GROUP_CHAT";
+    completedAt?: string;
+};
 
-    if (!c) {
-        const chats: CompletedChat[] = [
-            {
-                id: "c1",
-                title: "1퍼센트 부자들의 법칙",
-                subtitle: "주인공 감정에 대해 토론해요",
-                peopleText: "2 / 4 명",
-                timeText: "26.02.01 19:00",
-            },
-            {
-                id: "c2",
-                title: "1퍼센트 부자들의 법칙",
-                subtitle: "주인공 감정에 대해 토론해요",
-                peopleText: "2 / 4 명",
-                timeText: "26.02.01 19:00",
-            },
-            {
-                id: "c3",
-                title: "1퍼센트 부자들의 법칙",
-                subtitle: "마지막 대화 ... @@@@ 마지막대화마지막대화마지막대화...",
-                peopleText: "2 / 4 명",
-                timeText: "26.02.01 19:00",
-                isDone: true,
-            },
-            {
-                id: "c4",
-                title: "1퍼센트 부자들의 법칙",
-                subtitle: "마지막 대화 ... @@@@ 마지막대화마지막대화마지막대화...",
-                peopleText: "2 / 4 명",
-                timeText: "26.02.01 19:00",
-                isDone: true,
-            },
-        ];
-        await AsyncStorage.setItem(COMPLETED_CHATS_KEY, JSON.stringify(chats));
-    }
-
-    if (!n) {
-        const notes: Note[] = [
-            { id: "n1", bookTitle: "1퍼센트 부자들의 법칙", quote: "기억에 남은 책 구절", createdAt: "26.02.01" },
-            { id: "n2", bookTitle: "1퍼센트 부자들의 법칙", quote: "기억에 남은 책 구절", createdAt: "26.02.01" },
-            { id: "n3", bookTitle: "1퍼센트 부자들의 법칙", quote: "기억에 남은 책 구절", createdAt: "26.02.01" },
-        ];
-        await AsyncStorage.setItem(NOTES_KEY, JSON.stringify(notes));
-    }
-}
+type NoteItem = {
+    id: number;
+    bookTitle: string;
+    author?: string;
+    coverImage?: string;
+    memorableQuote?: string;
+    createdAt?: string;
+};
 
 export default function LibraryScreen() {
     const router = useRouter();
     const [tab, setTab] = useState<TabKey>("liked");
+    const [loading, setLoading] = useState(true);
 
-    const [liked, setLiked] = useState<Book[]>([]);
-    const [completed, setCompleted] = useState<CompletedChat[]>([]);
-    const [notes, setNotes] = useState<Note[]>([]);
+    const [liked, setLiked] = useState<LikedBook[]>([]);
+    const [completed, setCompleted] = useState<CompletedItem[]>([]);
+    const [notes, setNotes] = useState<NoteItem[]>([]);
 
     const load = useCallback(async () => {
-        await seedIfEmpty();
-        const [b, c, n] = await Promise.all([
-            AsyncStorage.getItem(LIKED_BOOKS_KEY),
-            AsyncStorage.getItem(COMPLETED_CHATS_KEY),
-            AsyncStorage.getItem(NOTES_KEY),
-        ]);
+        try {
+            setLoading(true);
 
-        setLiked(b ? (JSON.parse(b) as Book[]) : []);
-        setCompleted(c ? (JSON.parse(c) as CompletedChat[]) : []);
-        setNotes(n ? (JSON.parse(n) as Note[]) : []);
+            const rawUser = await AsyncStorage.getItem("user");
+            if (!rawUser) throw new Error("로그인 정보가 없습니다.");
+
+            const user = JSON.parse(rawUser);
+            const userId = Number(user.id);
+
+            const [wishlistRes, completionRes, notesRes] = await Promise.all([
+                getWishlist(userId),
+                getReadCompletions(userId),
+                getReadingNotes(userId),
+            ]);
+
+            setLiked(wishlistRes.data ?? []);
+            setCompleted(completionRes.data ?? []);
+            setNotes(notesRes.data ?? []);
+        } catch (e) {
+            Alert.alert("오류", e instanceof Error ? e.message : "데이터를 불러오지 못했습니다.");
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
     useFocusEffect(
@@ -154,7 +111,6 @@ export default function LibraryScreen() {
             />
 
             <View style={styles.screen}>
-                {/* 상단 탭 */}
                 <View style={styles.topTabs}>
                     <TabButton
                         active={tab === "liked"}
@@ -178,20 +134,31 @@ export default function LibraryScreen() {
 
                 <View style={styles.divider} />
 
-                {/* 리스트 */}
-                <FlatList
-                    data={data as any[]}
-                    keyExtractor={(item: any) => item.id}
-                    renderItem={({ item }: any) => {
-                        if (tab === "liked") return <LikedRow item={item as Book} />;
-                        if (tab === "completed") return <CompletedRow item={item as CompletedChat} />;
-                        return <NoteRow item={item as Note} />;
-                    }}
-                    ItemSeparatorComponent={() => <View style={styles.sep} />}
-                    contentContainerStyle={{ paddingBottom: tab === "notes" ? 110 : 30 }}
-                />
+                {loading ? (
+                    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                        <ActivityIndicator />
+                    </View>
+                ) : (
+                    <FlatList
+                        data={data as any[]}
+                        keyExtractor={(item: any) => String(item.id)}
+                        renderItem={({ item }: any) => {
+                            if (tab === "liked") return <LikedRow item={item as LikedBook} />;
+                            if (tab === "completed") return <CompletedRow item={item as CompletedItem} />;
+                            return <NoteRow item={item as NoteItem} />;
+                        }}
+                        ItemSeparatorComponent={() => <View style={styles.sep} />}
+                        contentContainerStyle={{ paddingBottom: tab === "notes" ? 110 : 30 }}
+                        ListEmptyComponent={
+                            <View style={{ padding: 24, alignItems: "center" }}>
+                                <Text style={{ color: COLORS.neutralDark, fontWeight: "800" }}>
+                                    데이터가 없습니다.
+                                </Text>
+                            </View>
+                        }
+                    />
+                )}
 
-                {/* 독서장 + 버튼 (독서장 탭에서만) */}
                 {tab === "notes" && (
                     <Pressable
                         onPress={() => router.push("/(profile)/note-create")}
@@ -224,56 +191,50 @@ function TabButton({
     );
 }
 
-function LikedRow({ item }: { item: Book }) {
+function LikedRow({ item }: { item: LikedBook }) {
     return (
         <View style={styles.row}>
-            <Image source={BOOK_COVER} style={styles.thumb} />
+            <Image
+                source={item.coverImage ? { uri: item.coverImage } : BOOK_COVER}
+                style={styles.thumb}
+            />
             <View style={{ flex: 1 }}>
-                <Text style={styles.title}>{item.title}</Text>
-                <Text style={styles.sub}>{item.author}</Text>
+                <Text style={styles.title}>{item.bookTitle}</Text>
+                <Text style={styles.sub}>{item.author ?? "저자 정보 없음"}</Text>
             </View>
         </View>
     );
 }
 
-function CompletedRow({ item }: { item: CompletedChat }) {
+function CompletedRow({ item }: { item: CompletedItem }) {
     return (
         <View style={styles.row}>
-            <Image source={BOOK_COVER} style={styles.thumb} />
+            <Image
+                source={item.bookCover ? { uri: item.bookCover } : BOOK_COVER}
+                style={styles.thumb}
+            />
             <View style={{ flex: 1 }}>
-                <Text style={styles.title}>{item.title}</Text>
-                <Text style={styles.sub}>{item.subtitle}</Text>
-
-                <View style={styles.metaRow}>
-                    <View style={styles.metaItem}>
-                        <IconSymbol name="person" size={14} color={COLORS.primary} />
-                        <Text style={styles.metaText}>{item.peopleText}</Text>
-                    </View>
-                    <View style={styles.metaItem}>
-                        <IconSymbol name="clock" size={14} color={COLORS.primary} />
-                        <Text style={styles.metaText}>{item.timeText}</Text>
-                    </View>
-                </View>
-
-                {item.isDone && (
-                    <View style={styles.doneRow}>
-                        <View style={styles.doneDot} />
-                        <Text style={styles.doneText}>완료</Text>
-                    </View>
-                )}
+                <Text style={styles.title}>{item.bookTitle}</Text>
+                <Text style={styles.sub}>{item.bookAuthor ?? "저자 정보 없음"}</Text>
+                <Text style={styles.metaText}>
+                    {item.completionType === "AI_CHAT" ? "AI 채팅 완독" : "그룹 채팅 완독"}
+                </Text>
             </View>
         </View>
     );
 }
 
-function NoteRow({ item }: { item: Note }) {
+function NoteRow({ item }: { item: NoteItem }) {
     return (
         <View style={styles.row}>
-            <Image source={BOOK_COVER} style={styles.thumb} />
+            <Image
+                source={item.coverImage ? { uri: item.coverImage } : BOOK_COVER}
+                style={styles.thumb}
+            />
             <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{item.bookTitle}</Text>
                 <Text style={styles.sub} numberOfLines={1}>
-                    “{item.quote}”
+                    “{item.memorableQuote ?? ""}”
                 </Text>
             </View>
         </View>
@@ -282,11 +243,7 @@ function NoteRow({ item }: { item: Note }) {
 
 const styles = StyleSheet.create({
     screen: { flex: 1, backgroundColor: COLORS.bg },
-
-    topTabs: {
-        flexDirection: "row",
-        backgroundColor: COLORS.bg,
-    },
+    topTabs: { flexDirection: "row", backgroundColor: COLORS.bg },
     tabBtn: {
         flex: 1,
         paddingVertical: 12,
@@ -296,19 +253,9 @@ const styles = StyleSheet.create({
         borderRightWidth: 1,
         borderRightColor: COLORS.border,
     },
-    tabBtnActive: {
-        backgroundColor: "#fff",
-    },
-    tabLabel: {
-        fontSize: 12,
-        fontWeight: "900",
-        color: COLORS.primary,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: COLORS.border,
-    },
-
+    tabBtnActive: { backgroundColor: "#fff" },
+    tabLabel: { fontSize: 12, fontWeight: "900", color: COLORS.primary },
+    divider: { height: 1, backgroundColor: COLORS.border },
     row: {
         flexDirection: "row",
         gap: 12,
@@ -324,59 +271,10 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border,
         backgroundColor: COLORS.secondary,
     },
-    title: {
-        fontSize: 14,
-        fontWeight: "900",
-        color: COLORS.primary,
-    },
-    sub: {
-        marginTop: 6,
-        fontSize: 12,
-        fontWeight: "800",
-        color: COLORS.neutralDark,
-    },
-
-    metaRow: {
-        marginTop: 8,
-        flexDirection: "row",
-        gap: 14,
-        alignItems: "center",
-    },
-    metaItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-    },
-    metaText: {
-        fontSize: 11,
-        fontWeight: "800",
-        color: COLORS.primary,
-    },
-
-    doneRow: {
-        marginTop: 8,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-    },
-    doneDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: "#E53935",
-    },
-    doneText: {
-        fontSize: 11,
-        fontWeight: "900",
-        color: "#E53935",
-    },
-
-    sep: {
-        height: 1,
-        backgroundColor: COLORS.border,
-        marginLeft: 16,
-    },
-
+    title: { fontSize: 14, fontWeight: "900", color: COLORS.primary },
+    sub: { marginTop: 6, fontSize: 12, fontWeight: "800", color: COLORS.neutralDark },
+    metaText: { marginTop: 8, fontSize: 11, fontWeight: "800", color: COLORS.primary },
+    sep: { height: 1, backgroundColor: COLORS.border, marginLeft: 16 },
     fab: {
         position: "absolute",
         right: 22,

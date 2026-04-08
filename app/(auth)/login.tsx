@@ -8,6 +8,7 @@ import {
     Text,
     TouchableWithoutFeedback,
     Keyboard,
+    Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
@@ -15,6 +16,8 @@ import { Stack, useRouter } from "expo-router";
 import AppInput from "@/components/ui/AppInput";
 import AppButton from "@/components/ui/AppButton";
 import { COLORS } from "@/constants/colors";
+import { login } from "@/services/api";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function Login() {
     const router = useRouter();
@@ -24,8 +27,37 @@ export default function Login() {
     const pwRef = useRef<TextInput>(null);
 
     const onSubmit = async () => {
-        // ✅ 개발용: 로그인 성공했다고 치고 무조건 취향선택 화면으로
-        router.replace("/(auth)/categoryselect");
+        try {
+            const data = await login(username.trim(), password);
+
+            await AsyncStorage.setItem(
+                "user",
+                JSON.stringify({
+                    id: data.id,
+                    userId: data.userId,
+                    name: data.name,
+                    nickname: data.nickname ?? "",
+                    email: data.email ?? "",
+                    role: data.role,
+                    surveyCompleted: data.surveyCompleted,
+                })
+            );
+
+            // 기존 키도 다른 화면에서 쓸 수 있으니 같이 유지해도 됨
+            await AsyncStorage.setItem("auth_user_id", String(data.id));
+            await AsyncStorage.setItem("auth_user_nickname", data.nickname ?? "");
+            await AsyncStorage.setItem("auth_user_email", data.email ?? "");
+
+            if (data.surveyCompleted) {
+                router.replace("/(tabs)");
+            } else {
+                router.replace("/(auth)/categoryselect");
+            }
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "로그인에 실패했습니다.";
+            Alert.alert("로그인 실패", message);
+        }
     };
 
     const goJoin = () => router.push("/(auth)/join");

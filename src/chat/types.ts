@@ -1,7 +1,6 @@
-// src/chat/types.ts
 export type MoodScore = 0 | 1 | 2 | 3 | 4 | 5;
 export type ChatMessageSender = "ME" | "AI" | "USER";
-export type RoomStatus = "IN_PROGRESS" | "ENDED";
+export type RoomStatus = "IN_PROGRESS" | "FINISHED";
 
 export type AiRoom = {
     id: string;
@@ -9,9 +8,9 @@ export type AiRoom = {
     author: string;
     coverUrl?: string;
 
-    mood: number;            // ✅ 0~5
-    createdAt: string;       // ISO
-    lastAt?: string;         // ISO
+    mood: number;
+    createdAt: string;
+    lastAt?: string;
     lastMessage?: string;
     status: RoomStatus;
 };
@@ -29,7 +28,7 @@ export type GroupRoom = {
     mood3: string;
     mood4: string;
 
-    startAt: string; // ISO
+    startAt: string;
     durationMin: number;
     maxPeople: number;
     joinedPeople: number;
@@ -42,6 +41,6 @@ export type ChatMessage = {
     roomId: string;
     sender: ChatMessageSender;
     text: string;
-    createdAt: string; // ISO
+    createdAt: string;
     senderName?: string;
 };
