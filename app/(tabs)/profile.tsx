@@ -5,7 +5,6 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import Svg, { Path, Circle, Rect, Line, Text as SvgText } from "react-native-svg";
 import { useFocusEffect } from "@react-navigation/native";
 import {
     getMyProfile,
@@ -171,15 +170,6 @@ function buildPreviewEmotions(
     };
 }
 
-function buildMiniLine(activity: Array<{ hour: number; participationScore: number }> = []) {
-    const fixedHours = [0, 4, 8, 12, 16, 20, 23];
-
-    return fixedHours.map((hour) => {
-        const found = activity.find((item) => item.hour === hour);
-        return found ? Math.round(found.participationScore) : 0;
-    });
-}
-
 function countRecent7DaysChats(completions: CompletedChat[]) {
     const now = new Date();
     const start = new Date(now);
@@ -192,6 +182,50 @@ function countRecent7DaysChats(completions: CompletedChat[]) {
         if (Number.isNaN(d.getTime())) return false;
         return d >= start && d <= now;
     }).length;
+}
+
+function getMostActiveHourLabel(
+    activity: Array<{ hour: number; participationScore: number }> = []
+) {
+    if (activity.length === 0) return "데이터 없음";
+
+    const top = [...activity].sort(
+        (a, b) => (Number(b.participationScore) || 0) - (Number(a.participationScore) || 0)
+    )[0];
+
+    if (!top) return "데이터 없음";
+
+    return `${String(top.hour).padStart(2, "0")}시`;
+}
+
+function getChronotypeLabel(
+    activity: Array<{ hour: number; participationScore: number }> = []
+) {
+    if (activity.length === 0) return "분석 중";
+
+    let morning = 0;   // 05~11
+    let afternoon = 0; // 12~17
+    let evening = 0;   // 18~21
+    let night = 0;     // 22~04
+
+    for (const item of activity) {
+        const hour = Number(item.hour);
+        const score = Number(item.participationScore) || 0;
+
+        if (hour >= 5 && hour <= 11) morning += score;
+        else if (hour >= 12 && hour <= 17) afternoon += score;
+        else if (hour >= 18 && hour <= 21) evening += score;
+        else night += score;
+    }
+
+    const buckets = [
+        { label: "오전형", value: morning },
+        { label: "오후형", value: afternoon },
+        { label: "저녁형", value: evening },
+        { label: "야간형", value: night },
+    ].sort((a, b) => b.value - a.value);
+
+    return buckets[0]?.label ?? "분석 중";
 }
 
 export default function ProfileScreen() {
@@ -210,11 +244,12 @@ export default function ProfileScreen() {
 
     const [thinkingStylePreview, setThinkingStylePreview] = useState("분석 중");
     const [weeklyChats, setWeeklyChats] = useState(0);
+    const [activeHourLabel, setActiveHourLabel] = useState("데이터 없음");
+    const [chronotypeLabel, setChronotypeLabel] = useState("분석 중");
     const [emotionTop1, setEmotionTop1] = useState("🙂");
     const [emotionPreview, setEmotionPreview] = useState<PreviewEmotionItem[]>([
         { emoji: "🙂", percent: 100 },
     ]);
-    const [miniLine, setMiniLine] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
 
     const load = useCallback(async () => {
         try {
@@ -282,9 +317,12 @@ export default function ProfileScreen() {
                 setChatEvents([]);
             }
 
+            const activity = activityRes.data || [];
+
             setThinkingStylePreview(getTopThinkingStyleLabel(thinkingRes.data));
             setWeeklyChats(countRecent7DaysChats(completions));
-            setMiniLine(buildMiniLine(activityRes.data || []));
+            setActiveHourLabel(getMostActiveHourLabel(activity));
+            setChronotypeLabel(getChronotypeLabel(activity));
 
             const availableGenres = (genresRes.data || []).filter(Boolean);
 
@@ -445,10 +483,9 @@ export default function ProfileScreen() {
                         </View>
 
                         <BulletRow title="최근 7일 채팅" value={`${weeklyChats}회`} />
+                        <BulletRow title="가장 활발한 시간대" value={activeHourLabel} />
+                        <BulletRow title="독서/채팅 성향" value={chronotypeLabel} />
                     </View>
-
-                    <Text style={previewStyles.miniTitle}>[ 미니 채팅 시간 그래프 ]</Text>
-                    <MiniLineChart values={miniLine} />
                 </Pressable>
             </ScrollView>
         </SafeAreaView>
@@ -488,62 +525,6 @@ function BulletRow({ title, value }: { title: string; value: string }) {
             <Text style={styles.bulletText}>
                 {title} : <Text style={styles.bulletValue}>{value}</Text>
             </Text>
-        </View>
-    );
-}
-
-function MiniLineChart({ values }: { values: number[] }) {
-    const W = 320;
-    const H = 88;
-
-    const padL = 16;
-    const padR = 12;
-    const padT = 14;
-    const padB = 18;
-
-    const maxV = Math.max(...values, 1);
-    const minV = 0;
-
-    const plotW = W - padL - padR;
-    const plotH = H - padT - padB;
-    const step = plotW / (values.length - 1);
-
-    const pts = values.map((v, i) => {
-        const x = padL + i * step;
-        const t = (v - minV) / (maxV - minV || 1);
-        const y = padT + (1 - t) * plotH;
-        return { x, y };
-    });
-
-    const d = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
-
-    return (
-        <View style={previewStyles.miniChartWrap}>
-            <Svg width={W} height={H}>
-                <Rect x={0} y={0} width={W} height={H} rx={12} ry={12} fill={COLORS.white} />
-                <Line x1={padL} x2={W - padR} y1={padT + plotH * 0.5} y2={padT + plotH * 0.5} stroke="#E9E9E9" strokeWidth={1} />
-                <Path d={d} fill="none" stroke="#6C7BFF" strokeWidth={2.5} />
-                {pts.map((p, i) => (
-                    <Circle key={i} cx={p.x} cy={p.y} r={3.6} fill="#6C7BFF" />
-                ))}
-
-                {["00", "04", "08", "12", "16", "20", "24"].map((t, i) => {
-                    const x = padL + i * step;
-                    const isLast = i === 6;
-                    return (
-                        <SvgText
-                            key={t}
-                            x={isLast ? W - padR : x}
-                            y={H - 6}
-                            fontSize={10}
-                            fill={COLORS.primary}
-                            textAnchor={isLast ? "end" : "middle"}
-                        >
-                            {t}
-                        </SvgText>
-                    );
-                })}
-            </Svg>
         </View>
     );
 }
@@ -709,20 +690,6 @@ const previewStyles = StyleSheet.create({
     bullets: {
         marginTop: 14,
         gap: 12,
-    },
-
-    miniTitle: {
-        marginTop: 14,
-        fontSize: 12,
-        fontWeight: "900",
-        color: COLORS.primary,
-        textAlign: "center",
-        opacity: 0.95,
-    },
-
-    miniChartWrap: {
-        marginTop: 10,
-        alignItems: "center",
     },
 
     emojiRow: {
