@@ -9,6 +9,7 @@ import {
     TouchableWithoutFeedback,
     Keyboard,
     Alert,
+    Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
@@ -26,27 +27,46 @@ export default function Login() {
     const [password, setPassword] = useState("");
     const pwRef = useRef<TextInput>(null);
 
+    const saveUserToStorage = async (data: {
+        id: number;
+        userId: string;
+        name: string;
+        nickname?: string;
+        email?: string;
+        role: string;
+        surveyCompleted: boolean;
+    }) => {
+        await AsyncStorage.setItem(
+            "user",
+            JSON.stringify({
+                id: data.id,
+                userId: data.userId,
+                name: data.name,
+                nickname: data.nickname ?? "",
+                email: data.email ?? "",
+                role: data.role,
+                surveyCompleted: data.surveyCompleted,
+            })
+        );
+
+        await AsyncStorage.setItem("auth_user_id", String(data.id));
+        await AsyncStorage.setItem("auth_user_nickname", data.nickname ?? "");
+        await AsyncStorage.setItem("auth_user_email", data.email ?? "");
+    };
+
     const onSubmit = async () => {
         try {
             const data = await login(username.trim(), password);
 
-            await AsyncStorage.setItem(
-                "user",
-                JSON.stringify({
-                    id: data.id,
-                    userId: data.userId,
-                    name: data.name,
-                    nickname: data.nickname ?? "",
-                    email: data.email ?? "",
-                    role: data.role,
-                    surveyCompleted: data.surveyCompleted,
-                })
-            );
-
-            // 기존 키도 다른 화면에서 쓸 수 있으니 같이 유지해도 됨
-            await AsyncStorage.setItem("auth_user_id", String(data.id));
-            await AsyncStorage.setItem("auth_user_nickname", data.nickname ?? "");
-            await AsyncStorage.setItem("auth_user_email", data.email ?? "");
+            await saveUserToStorage({
+                id: data.id,
+                userId: data.userId,
+                name: data.name,
+                nickname: data.nickname ?? "",
+                email: data.email ?? "",
+                role: data.role,
+                surveyCompleted: data.surveyCompleted,
+            });
 
             if (data.surveyCompleted) {
                 router.replace("/(tabs)");
@@ -60,6 +80,27 @@ export default function Login() {
         }
     };
 
+    const onDevLogin = async () => {
+        try {
+            await saveUserToStorage({
+                id: 1,
+                userId: "testuser",
+                name: "테스트 유저",
+                nickname: "테스트계정",
+                email: "test@test.com",
+                role: "USER",
+                surveyCompleted: true,
+            });
+
+            Alert.alert("테스트 로그인", "임시 로그인 처리되었습니다.");
+            router.replace("/(tabs)");
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "테스트 로그인에 실패했습니다.";
+            Alert.alert("오류", message);
+        }
+    };
+
     const goJoin = () => router.push("/(auth)/join");
 
     return (
@@ -68,7 +109,10 @@ export default function Login() {
 
             <SafeAreaView style={styles.safeArea}>
                 <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-                    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === "ios" ? "padding" : undefined}
+                        style={{ flex: 1 }}
+                    >
                         <View style={styles.container}>
                             <Text style={styles.logo}>여백 餘白</Text>
 
@@ -94,7 +138,12 @@ export default function Login() {
                                 style={styles.input}
                             />
 
-                            <AppButton title="계속" onPress={onSubmit} variant="primary" style={styles.btn} />
+                            <AppButton
+                                title="계속"
+                                onPress={onSubmit}
+                                variant="primary"
+                                style={styles.btn}
+                            />
 
                             <View style={styles.dividerWrap}>
                                 <View style={styles.divider} />
@@ -102,7 +151,24 @@ export default function Login() {
                                 <View style={styles.divider} />
                             </View>
 
-                            <AppButton title="회원가입 하러 가기" onPress={goJoin} variant="secondary" style={styles.btn} />
+                            <AppButton
+                                title="회원가입 하러 가기"
+                                onPress={goJoin}
+                                variant="secondary"
+                                style={styles.btn}
+                            />
+
+                            <Pressable
+                                onPress={onDevLogin}
+                                style={({ pressed }) => [
+                                    styles.devLoginBtn,
+                                    pressed && { opacity: 0.8 },
+                                ]}
+                            >
+                                <Text style={styles.devLoginText}>
+                                    테스트용 로그인 건너뛰기
+                                </Text>
+                            </Pressable>
                         </View>
                     </KeyboardAvoidingView>
                 </TouchableWithoutFeedback>
@@ -113,7 +179,13 @@ export default function Login() {
 
 const styles = StyleSheet.create({
     safeArea: { flex: 1, backgroundColor: COLORS.bg },
-    container: { flex: 1, paddingHorizontal: 28, paddingTop: 80 },
+
+    container: {
+        flex: 1,
+        paddingHorizontal: 28,
+        paddingTop: 80,
+    },
+
     logo: {
         fontSize: 42,
         fontWeight: "900",
@@ -121,13 +193,47 @@ const styles = StyleSheet.create({
         textAlign: "center",
         marginBottom: 60,
     },
-    input: { marginBottom: 14 },
-    btn: { height: 48, borderRadius: 6 },
+
+    input: {
+        marginBottom: 14,
+    },
+
+    btn: {
+        height: 48,
+        borderRadius: 6,
+    },
+
     dividerWrap: {
         flexDirection: "row",
         alignItems: "center",
         marginVertical: 26,
     },
-    divider: { flex: 1, height: 1, backgroundColor: "#E0E0E0" },
-    orText: { marginHorizontal: 12, fontSize: 12, color: COLORS.muted },
+
+    divider: {
+        flex: 1,
+        height: 1,
+        backgroundColor: "#E0E0E0",
+    },
+
+    orText: {
+        marginHorizontal: 12,
+        fontSize: 12,
+        color: COLORS.muted,
+    },
+
+    devLoginBtn: {
+        marginTop: 18,
+        alignSelf: "center",
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+    },
+
+    devLoginText: {
+        fontSize: 13,
+        fontWeight: "800",
+        color: COLORS.primary,
+        textDecorationLine: "underline",
+    },
 });
+
+// 테스트 로그인 버튼 나중에 삭제

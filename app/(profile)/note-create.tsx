@@ -17,7 +17,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import SearchBar from "@/components/ui/SearchBar";
-import { createReadingNote, searchBooks } from "@/services/api";
+import { createBookReview, searchBooks } from "@/services/api";
 
 type Book = {
     id: string;
@@ -37,11 +37,12 @@ export default function NoteCreateScreen() {
     const [results, setResults] = useState<Book[]>([]);
     const [loading, setLoading] = useState(false);
     const [selected, setSelected] = useState<Book | null>(null);
-    const [quote, setQuote] = useState("");
+    const [reviewContent, setReviewContent] = useState("");
+    const [submitting, setSubmitting] = useState(false);
 
     const canSave = useMemo(() => {
-        return !!selected && quote.trim().length > 0;
-    }, [selected, quote]);
+        return !!selected && reviewContent.trim().length > 0 && !submitting;
+    }, [selected, reviewContent, submitting]);
 
     const onSearch = async () => {
         const q = query.trim();
@@ -91,34 +92,71 @@ export default function NoteCreateScreen() {
         setSelected(null);
     };
 
-    const onSave = async () => {
-        if (!selected || !quote.trim()) return;
+    const saveReview = async () => {
+        if (!selected || !reviewContent.trim()) {
+            throw new Error("책과 독후감 내용을 입력해주세요.");
+        }
+
+        const rawUser = await AsyncStorage.getItem("user");
+        if (!rawUser) throw new Error("로그인 정보가 없습니다.");
+
+        const user = JSON.parse(rawUser);
+        const userId = Number(user.id);
+
+        if (!userId) {
+            throw new Error("사용자 정보가 올바르지 않습니다.");
+        }
+
+        const res = await createBookReview({
+            userId,
+            bookIsbn: selected.isbn,
+            bookTitle: selected.title,
+            author: selected.author,
+            coverImage: selected.coverImage,
+            publisher: selected.publisher,
+            content: reviewContent.trim(),
+        });
+
+        return res;
+    };
+
+    const onSaveOnly = async () => {
+        if (!canSave) return;
 
         try {
-            const rawUser = await AsyncStorage.getItem("user");
-            if (!rawUser) throw new Error("로그인 정보가 없습니다.");
-
-            const user = JSON.parse(rawUser);
-            const userId = Number(user.id);
-
-            if (!userId) {
-                throw new Error("사용자 정보가 올바르지 않습니다.");
-            }
-
-            await createReadingNote({
-                userId,
-                bookIsbn: selected.isbn,
-                bookTitle: selected.title,
-                author: selected.author,
-                coverImage: selected.coverImage,
-                publisher: selected.publisher,
-                memorableQuote: quote.trim(),
-            });
-
-            Alert.alert("완료", "독서장이 저장되었습니다.");
+            setSubmitting(true);
+            await saveReview();
+            Alert.alert("완료", "독후감이 저장되었습니다.");
             router.back();
         } catch (e) {
-            Alert.alert("오류", e instanceof Error ? e.message : "독서장 저장 실패");
+            Alert.alert("오류", e instanceof Error ? e.message : "독후감 저장 실패");
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const onSaveAndChat = async () => {
+        if (!canSave) return;
+
+        try {
+            setSubmitting(true);
+            const saved = await saveReview();
+
+            Alert.alert("완료", "독후감 저장 후 AI 채팅으로 이동합니다.");
+
+            router.push({
+                pathname: "/chat",
+                params: {
+                    reviewId: String(saved.data?.id ?? ""),
+                    bookTitle: selected?.title ?? "",
+                    isbn: selected?.isbn ?? "",
+                    mode: "review",
+                },
+            });
+        } catch (e) {
+            Alert.alert("오류", e instanceof Error ? e.message : "저장 후 AI 채팅 이동 실패");
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -126,7 +164,7 @@ export default function NoteCreateScreen() {
         <>
             <Stack.Screen
                 options={{
-                    title: "독서장 작성",
+                    title: "독후감 작성",
                     headerShadowVisible: false,
                     headerStyle: { backgroundColor: COLORS.bg },
                     headerTitleStyle: { color: COLORS.primary, fontWeight: "900" },
@@ -229,30 +267,48 @@ export default function NoteCreateScreen() {
 
                     <View style={styles.inputCard}>
                         <TextInput
-                            value={quote}
-                            onChangeText={setQuote}
-                            placeholder="책 속 기억에 남는 한 구절을 작성해주세요"
+                            value={reviewContent}
+                            onChangeText={setReviewContent}
+                            placeholder="책에 대한 독후감을 작성해주세요"
                             placeholderTextColor={COLORS.neutralLightDarkest}
                             multiline
                             style={styles.textArea}
                         />
                     </View>
 
-                    <View style={{ height: 90 }} />
+                    <View style={{ height: 110 }} />
                 </ScrollView>
 
                 <View style={styles.bottomBar}>
-                    <Pressable
-                        onPress={onSave}
-                        disabled={!canSave}
-                        style={({ pressed }) => [
-                            styles.saveBtn,
-                            !canSave && { opacity: 0.5 },
-                            pressed && canSave && { opacity: 0.9 },
-                        ]}
-                    >
-                        <Text style={styles.saveText}>저장</Text>
-                    </Pressable>
+                    <View style={styles.buttonRow}>
+                        <Pressable
+                            onPress={onSaveOnly}
+                            disabled={!canSave}
+                            style={({ pressed }) => [
+                                styles.secondaryBtn,
+                                !canSave && { opacity: 0.5 },
+                                pressed && canSave && { opacity: 0.9 },
+                            ]}
+                        >
+                            <Text style={styles.secondaryBtnText}>
+                                {submitting ? "저장 중..." : "독후감만 저장"}
+                            </Text>
+                        </Pressable>
+
+                        <Pressable
+                            onPress={onSaveAndChat}
+                            disabled={!canSave}
+                            style={({ pressed }) => [
+                                styles.primaryBtn,
+                                !canSave && { opacity: 0.5 },
+                                pressed && canSave && { opacity: 0.9 },
+                            ]}
+                        >
+                            <Text style={styles.primaryBtnText}>
+                                {submitting ? "처리 중..." : "저장 후 AI 채팅"}
+                            </Text>
+                        </Pressable>
+                    </View>
                 </View>
             </KeyboardAvoidingView>
         </>
@@ -390,11 +446,12 @@ const styles = StyleSheet.create({
     },
 
     textArea: {
-        minHeight: 180,
-        fontSize: 12,
+        minHeight: 220,
+        fontSize: 13,
         fontWeight: "800",
         color: COLORS.primary,
         textAlignVertical: "top",
+        lineHeight: 22,
     },
 
     bottomBar: {
@@ -406,7 +463,24 @@ const styles = StyleSheet.create({
         paddingBottom: Platform.OS === "ios" ? 18 : 12,
     },
 
-    saveBtn: {
+    buttonRow: {
+        flexDirection: "row",
+        gap: 10,
+    },
+
+    secondaryBtn: {
+        flex: 1,
+        height: 44,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: COLORS.primary,
+        backgroundColor: COLORS.white,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
+    primaryBtn: {
+        flex: 1,
         height: 44,
         borderRadius: 12,
         backgroundColor: COLORS.primary,
@@ -414,7 +488,13 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
 
-    saveText: {
+    secondaryBtnText: {
+        fontSize: 13,
+        fontWeight: "900",
+        color: COLORS.primary,
+    },
+
+    primaryBtnText: {
         fontSize: 13,
         fontWeight: "900",
         color: COLORS.bg,
