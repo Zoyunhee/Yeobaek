@@ -1008,3 +1008,99 @@ export async function getAvailableGenres() {
         data: string[];
     }>("/api/books/genres");
 }
+/* 독후감 */
+export async function getBookReviews(userId: number) {
+    return apiFetch<{
+        success: boolean;
+        count: number;
+        data: Array<{
+            id: number;
+            userId: number;
+            bookIsbn: string;
+            bookTitle: string;
+            author?: string;
+            coverImage?: string;
+            publisher?: string;
+            content?: string;
+            createdAt?: string;
+            updatedAt?: string;
+        }>;
+    }>(`/api/mypage/book-reviews/${userId}`);
+}
+
+export async function getBookReviewDetail(reviewId: number) {
+    return apiFetch<{
+        success: boolean;
+        data: {
+            id: number;
+            userId: number;
+            bookIsbn: string;
+            bookTitle: string;
+            author?: string;
+            coverImage?: string;
+            publisher?: string;
+            content?: string;
+            createdAt?: string;
+            updatedAt?: string;
+        };
+    }>(`/api/mypage/book-reviews/detail/${reviewId}`);
+}
+
+export async function createBookReview(params: {
+    userId: number;
+    bookIsbn: string;
+    bookTitle: string;
+    author?: string;
+    coverImage?: string;
+    publisher?: string;
+    content: string;
+}) {
+    return apiFetch<{
+        success: boolean;
+        message: string;
+        data: {
+            id: number;
+            userId: number;
+            bookIsbn: string;
+            bookTitle: string;
+            author?: string;
+            coverImage?: string;
+            publisher?: string;
+            content: string;
+            createdAt: string;
+            updatedAt?: string;
+        };
+    }>("/api/mypage/book-reviews", {
+        method: "POST",
+        body: JSON.stringify(params),
+    });
+}
+
+export async function updateBookReview(
+    reviewId: number,
+    userId: number,
+    content: string
+) {
+    return apiFetch<{
+        success: boolean;
+        message: string;
+        data: {
+            id: number;
+            userId: number;
+            content: string;
+            updatedAt?: string;
+        };
+    }>(`/api/mypage/book-reviews/${reviewId}?userId=${userId}`, {
+        method: "PUT",
+        body: JSON.stringify({ content }),
+    });
+}
+
+export async function deleteBookReview(reviewId: number, userId: number) {
+    return apiFetch<{
+        success: boolean;
+        message: string;
+    }>(`/api/mypage/book-reviews/${reviewId}?userId=${userId}`, {
+        method: "DELETE",
+    });
+}

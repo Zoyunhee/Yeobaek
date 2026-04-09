@@ -18,10 +18,10 @@ import type { IconSymbolName } from "@/components/ui/icon-symbol";
 import {
     getWishlist,
     getReadCompletions,
-    getReadingNotes,
+    getBookReviews,
 } from "@/services/api";
 
-type TabKey = "liked" | "completed" | "notes";
+type TabKey = "liked" | "completed" | "reviews";
 
 const BOOK_COVER = require("../../assets/images/book-cover.png");
 
@@ -41,13 +41,17 @@ type CompletedItem = {
     completedAt?: string;
 };
 
-type NoteItem = {
+type ReviewItem = {
     id: number;
+    userId: number;
+    bookIsbn: string;
     bookTitle: string;
     author?: string;
     coverImage?: string;
-    memorableQuote?: string;
+    publisher?: string;
+    content?: string;
     createdAt?: string;
+    updatedAt?: string;
 };
 
 export default function LibraryScreen() {
@@ -57,7 +61,7 @@ export default function LibraryScreen() {
 
     const [liked, setLiked] = useState<LikedBook[]>([]);
     const [completed, setCompleted] = useState<CompletedItem[]>([]);
-    const [notes, setNotes] = useState<NoteItem[]>([]);
+    const [reviews, setReviews] = useState<ReviewItem[]>([]);
 
     const load = useCallback(async () => {
         try {
@@ -69,15 +73,15 @@ export default function LibraryScreen() {
             const user = JSON.parse(rawUser);
             const userId = Number(user.id);
 
-            const [wishlistRes, completionRes, notesRes] = await Promise.all([
+            const [wishlistRes, completionRes, reviewRes] = await Promise.all([
                 getWishlist(userId),
                 getReadCompletions(userId),
-                getReadingNotes(userId),
+                getBookReviews(userId),
             ]);
 
             setLiked(wishlistRes.data ?? []);
             setCompleted(completionRes.data ?? []);
-            setNotes(notesRes.data ?? []);
+            setReviews(reviewRes.data ?? []);
         } catch (e) {
             Alert.alert("오류", e instanceof Error ? e.message : "데이터를 불러오지 못했습니다.");
         } finally {
@@ -94,8 +98,8 @@ export default function LibraryScreen() {
     const data = useMemo(() => {
         if (tab === "liked") return liked;
         if (tab === "completed") return completed;
-        return notes;
-    }, [tab, liked, completed, notes]);
+        return reviews;
+    }, [tab, liked, completed, reviews]);
 
     return (
         <>
@@ -125,17 +129,17 @@ export default function LibraryScreen() {
                         onPress={() => setTab("completed")}
                     />
                     <TabButton
-                        active={tab === "notes"}
-                        iconName={tab === "notes" ? "book.fill" : "book"}
-                        label="독서장"
-                        onPress={() => setTab("notes")}
+                        active={tab === "reviews"}
+                        iconName={tab === "reviews" ? "book.fill" : "book"}
+                        label="독후감"
+                        onPress={() => setTab("reviews")}
                     />
                 </View>
 
                 <View style={styles.divider} />
 
                 {loading ? (
-                    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+                    <View style={styles.loadingWrap}>
                         <ActivityIndicator />
                     </View>
                 ) : (
@@ -145,21 +149,29 @@ export default function LibraryScreen() {
                         renderItem={({ item }: any) => {
                             if (tab === "liked") return <LikedRow item={item as LikedBook} />;
                             if (tab === "completed") return <CompletedRow item={item as CompletedItem} />;
-                            return <NoteRow item={item as NoteItem} />;
+                            return (
+                                <ReviewRow
+                                    item={item as ReviewItem}
+                                    onPress={() =>
+                                        router.push({
+                                            pathname: "/(profile)/review-detail",
+                                            params: { reviewId: String(item.id) },
+                                        })
+                                    }
+                                />
+                            );
                         }}
                         ItemSeparatorComponent={() => <View style={styles.sep} />}
-                        contentContainerStyle={{ paddingBottom: tab === "notes" ? 110 : 30 }}
+                        contentContainerStyle={{ paddingBottom: tab === "reviews" ? 110 : 30 }}
                         ListEmptyComponent={
-                            <View style={{ padding: 24, alignItems: "center" }}>
-                                <Text style={{ color: COLORS.neutralDark, fontWeight: "800" }}>
-                                    데이터가 없습니다.
-                                </Text>
+                            <View style={styles.emptyWrap}>
+                                <Text style={styles.emptyText}>데이터가 없습니다.</Text>
                             </View>
                         }
                     />
                 )}
 
-                {tab === "notes" && (
+                {tab === "reviews" && (
                     <Pressable
                         onPress={() => router.push("/(profile)/note-create")}
                         style={({ pressed }) => [styles.fab, pressed && { opacity: 0.9 }]}
@@ -224,26 +236,36 @@ function CompletedRow({ item }: { item: CompletedItem }) {
     );
 }
 
-function NoteRow({ item }: { item: NoteItem }) {
+function ReviewRow({
+                       item,
+                       onPress,
+                   }: {
+    item: ReviewItem;
+    onPress: () => void;
+}) {
     return (
-        <View style={styles.row}>
+        <Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}>
             <Image
                 source={item.coverImage ? { uri: item.coverImage } : BOOK_COVER}
                 style={styles.thumb}
             />
             <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{item.bookTitle}</Text>
-                <Text style={styles.sub} numberOfLines={1}>
-                    “{item.memorableQuote ?? ""}”
+                <Text style={styles.sub}>{item.author ?? "저자 정보 없음"}</Text>
+                <Text style={styles.preview} numberOfLines={2}>
+                    {item.content ?? ""}
                 </Text>
             </View>
-        </View>
+            <IconSymbol name="chevron.right" size={16} color={COLORS.neutralDark} />
+        </Pressable>
     );
 }
 
 const styles = StyleSheet.create({
     screen: { flex: 1, backgroundColor: COLORS.bg },
+
     topTabs: { flexDirection: "row", backgroundColor: COLORS.bg },
+
     tabBtn: {
         flex: 1,
         paddingVertical: 12,
@@ -253,16 +275,28 @@ const styles = StyleSheet.create({
         borderRightWidth: 1,
         borderRightColor: COLORS.border,
     },
+
     tabBtnActive: { backgroundColor: "#fff" },
+
     tabLabel: { fontSize: 12, fontWeight: "900", color: COLORS.primary },
+
     divider: { height: 1, backgroundColor: COLORS.border },
+
+    loadingWrap: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+
     row: {
         flexDirection: "row",
         gap: 12,
         paddingHorizontal: 16,
         paddingVertical: 14,
         backgroundColor: COLORS.bg,
+        alignItems: "center",
     },
+
     thumb: {
         width: 46,
         height: 62,
@@ -271,10 +305,33 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border,
         backgroundColor: COLORS.secondary,
     },
+
     title: { fontSize: 14, fontWeight: "900", color: COLORS.primary },
+
     sub: { marginTop: 6, fontSize: 12, fontWeight: "800", color: COLORS.neutralDark },
+
+    preview: {
+        marginTop: 8,
+        fontSize: 12,
+        lineHeight: 18,
+        fontWeight: "700",
+        color: COLORS.primary,
+    },
+
     metaText: { marginTop: 8, fontSize: 11, fontWeight: "800", color: COLORS.primary },
+
     sep: { height: 1, backgroundColor: COLORS.border, marginLeft: 16 },
+
+    emptyWrap: {
+        padding: 24,
+        alignItems: "center",
+    },
+
+    emptyText: {
+        color: COLORS.neutralDark,
+        fontWeight: "800",
+    },
+
     fab: {
         position: "absolute",
         right: 22,
@@ -286,6 +343,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
+
     fabPlus: {
         fontSize: 28,
         fontWeight: "900",
