@@ -3,6 +3,7 @@ import { FlatList, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { COLORS } from "@/constants/colors";
 import SegmentedToggle from "@/components/ui/SegmentedToggle";
@@ -35,6 +36,16 @@ type GroupRoomView = {
     startAt: string;
     status: "WAITING" | "IN_PROGRESS" | "FINISHED";
 };
+
+type CompletedChatMeta = {
+    roomId: number;
+    bookTitle: string;
+    topicLabel: string;
+    topicDescription?: string;
+    completedAt: string;
+};
+
+const COMPLETED_META_KEY = "mock_completed_ai_chats";
 
 const formatTime = (iso?: string) => {
     if (!iso) return "";
@@ -85,9 +96,26 @@ export default function ChatMainScreen() {
 
         async function loadAiRooms() {
             try {
-                const res = await getAiRooms("IN_PROGRESS");
+                const [res, completedMetaRaw] = await Promise.all([
+                    getAiRooms("IN_PROGRESS"),
+                    AsyncStorage.getItem(COMPLETED_META_KEY),
+                ]);
+
                 if (!mounted || !res.success) return;
-                setAiRooms((res.data ?? []).map(mapAiRoom));
+
+                const completedMeta: CompletedChatMeta[] = completedMetaRaw
+                    ? JSON.parse(completedMetaRaw)
+                    : [];
+
+                const completedRoomIds = new Set(
+                    completedMeta.map((item) => String(item.roomId))
+                );
+
+                const mapped = (res.data ?? [])
+                    .map(mapAiRoom)
+                    .filter((room) => !completedRoomIds.has(room.id));
+
+                setAiRooms(mapped);
             } catch (error) {
                 console.error("AI 채팅 목록 조회 실패:", error);
             }
@@ -211,7 +239,10 @@ export default function ChatMainScreen() {
                                 onPress={() =>
                                     router.push({
                                         pathname: "/(tabs)/chat/ai-room",
-                                        params: { roomId: r.id },
+                                        params: {
+                                            roomId: r.id,
+                                            bookTitle: r.bookTitle,
+                                        },
                                     } as any)
                                 }
                             />
