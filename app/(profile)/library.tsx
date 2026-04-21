@@ -24,6 +24,7 @@ import {
 type TabKey = "liked" | "completed" | "reviews";
 
 const BOOK_COVER = require("../../assets/images/book-cover.png");
+const COMPLETED_META_KEY = "mock_completed_ai_chats";
 
 type LikedBook = {
     id: number;
@@ -54,13 +55,35 @@ type ReviewItem = {
     updatedAt?: string;
 };
 
+type CompletedChatMeta = {
+    roomId: number;
+    bookTitle: string;
+    topicLabel: string;
+    topicDescription?: string;
+    completedAt: string;
+};
+
+type CompletedMergedItem = CompletedItem & {
+    topicLabel?: string;
+    topicDescription?: string;
+};
+
+function formatDateText(value?: string) {
+    if (!value) return "";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
+
 export default function LibraryScreen() {
     const router = useRouter();
     const [tab, setTab] = useState<TabKey>("liked");
     const [loading, setLoading] = useState(true);
 
     const [liked, setLiked] = useState<LikedBook[]>([]);
-    const [completed, setCompleted] = useState<CompletedItem[]>([]);
+    const [completed, setCompleted] = useState<CompletedMergedItem[]>([]);
     const [reviews, setReviews] = useState<ReviewItem[]>([]);
 
     const load = useCallback(async () => {
@@ -73,15 +96,35 @@ export default function LibraryScreen() {
             const user = JSON.parse(rawUser);
             const userId = Number(user.id);
 
-            const [wishlistRes, completionRes, reviewRes] = await Promise.all([
+            const [wishlistRes, completionRes, reviewRes, completedMetaRaw] = await Promise.all([
                 getWishlist(userId),
                 getReadCompletions(userId),
                 getBookReviews(userId),
+                AsyncStorage.getItem(COMPLETED_META_KEY),
             ]);
 
-            setLiked(wishlistRes.data ?? []);
-            setCompleted(completionRes.data ?? []);
-            setReviews(reviewRes.data ?? []);
+            const completionList = completionRes.data ?? [];
+            const reviewList = reviewRes.data ?? [];
+            const wishlist = wishlistRes.data ?? [];
+            const completedMeta: CompletedChatMeta[] = completedMetaRaw
+                ? JSON.parse(completedMetaRaw)
+                : [];
+
+            const mergedCompleted: CompletedMergedItem[] = completionList.map((item) => {
+                const matched = completedMeta.find(
+                    (meta) => meta.bookTitle === item.bookTitle
+                );
+
+                return {
+                    ...item,
+                    topicLabel: matched?.topicLabel,
+                    topicDescription: matched?.topicDescription,
+                };
+            });
+
+            setLiked(wishlist);
+            setCompleted(mergedCompleted);
+            setReviews(reviewList);
         } catch (e) {
             Alert.alert("오류", e instanceof Error ? e.message : "데이터를 불러오지 못했습니다.");
         } finally {
@@ -107,7 +150,11 @@ export default function LibraryScreen() {
                 options={{
                     title: "나의 서재",
                     headerLeft: () => (
-                        <Pressable onPress={() => router.back()} hitSlop={12} style={{ paddingHorizontal: 6 }}>
+                        <Pressable
+                            onPress={() => router.back()}
+                            hitSlop={12}
+                            style={{ paddingHorizontal: 6 }}
+                        >
                             <IconSymbol name="chevron.left" size={18} color={COLORS.primary} />
                         </Pressable>
                     ),
@@ -148,7 +195,28 @@ export default function LibraryScreen() {
                         keyExtractor={(item: any) => String(item.id)}
                         renderItem={({ item }: any) => {
                             if (tab === "liked") return <LikedRow item={item as LikedBook} />;
-                            if (tab === "completed") return <CompletedRow item={item as CompletedItem} />;
+
+                            if (tab === "completed") {
+                                return (
+                                    <CompletedRow
+                                        item={item as CompletedMergedItem}
+                                        onPress={() =>
+                                            router.push({
+                                                pathname: "/(tabs)/chat/ai-room",
+                                                params: {
+                                                    roomId: String(item.id),
+                                                    bookTitle: item.bookTitle,
+                                                    topicLabel: item.topicLabel ?? "선택 주제",
+                                                    topicDescription:
+                                                        item.topicDescription ?? "",
+                                                    readOnly: "true",
+                                                },
+                                            })
+                                        }
+                                    />
+                                );
+                            }
+
                             return (
                                 <ReviewRow
                                     item={item as ReviewItem}
@@ -218,9 +286,15 @@ function LikedRow({ item }: { item: LikedBook }) {
     );
 }
 
-function CompletedRow({ item }: { item: CompletedItem }) {
+function CompletedRow({
+                          item,
+                          onPress,
+                      }: {
+    item: CompletedMergedItem;
+    onPress: () => void;
+}) {
     return (
-        <View style={styles.row}>
+        <Pressable onPress={onPress} style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}>
             <Image
                 source={item.bookCover ? { uri: item.bookCover } : BOOK_COVER}
                 style={styles.thumb}
@@ -228,11 +302,23 @@ function CompletedRow({ item }: { item: CompletedItem }) {
             <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{item.bookTitle}</Text>
                 <Text style={styles.sub}>{item.bookAuthor ?? "저자 정보 없음"}</Text>
+
+                {!!item.topicLabel && (
+                    <Text style={styles.topicText}>주제 · {item.topicLabel}</Text>
+                )}
+
                 <Text style={styles.metaText}>
                     {item.completionType === "AI_CHAT" ? "AI 채팅 완독" : "그룹 채팅 완독"}
                 </Text>
+
+                {!!item.completedAt && (
+                    <Text style={styles.dateText}>
+                        완료일 {formatDateText(item.completedAt)}
+                    </Text>
+                )}
             </View>
-        </View>
+            <IconSymbol name="chevron.right" size={16} color={COLORS.neutralDark} />
+        </Pressable>
     );
 }
 
@@ -318,7 +404,21 @@ const styles = StyleSheet.create({
         color: COLORS.primary,
     },
 
-    metaText: { marginTop: 8, fontSize: 11, fontWeight: "800", color: COLORS.primary },
+    topicText: {
+        marginTop: 8,
+        fontSize: 12,
+        fontWeight: "900",
+        color: COLORS.primary,
+    },
+
+    metaText: { marginTop: 6, fontSize: 11, fontWeight: "800", color: COLORS.primary },
+
+    dateText: {
+        marginTop: 4,
+        fontSize: 11,
+        fontWeight: "700",
+        color: COLORS.neutralDark,
+    },
 
     sep: { height: 1, backgroundColor: COLORS.border, marginLeft: 16 },
 

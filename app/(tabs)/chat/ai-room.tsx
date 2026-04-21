@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -12,72 +12,160 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import MessageBubble from "@/components/ui/MessageBubble";
 import ChatInput from "@/components/ui/ChatInput";
-import {
-    type AiMessage,
-    discardAiRoom,
-    finishAiSession,
-    getAiMessages,
-    saveAiSession,
-    sendAiMessage,
-    startAiSession,
-} from "@/services/api";
+import { type AiMessage } from "@/services/api";
 
 const keyExtractor = (item: AiMessage) => `${item.id}`;
+const COMPLETED_META_KEY = "mock_completed_ai_chats";
+
+type CompletedChatMeta = {
+    roomId: number;
+    bookTitle: string;
+    topicLabel: string;
+    topicDescription?: string;
+    completedAt: string;
+};
+
+const buildAiReply = (
+    topicId: string,
+    userText: string,
+    turn: number
+): string => {
+    const commonEndings = [
+        "조금 더 구체적으로 떠올려볼 수 있을까요?",
+        "반대로 보면 다른 해석도 가능할까요?",
+        "그 생각의 근거가 된 장면이 있었나요?",
+    ];
+
+    if (turn >= 4) {
+        return "좋아요. 오늘 대화는 여기까지 해볼게요. 이번 대화는 자가진단에 반영될 예정이에요.";
+    }
+
+    if (topicId === "analysis") {
+        return [
+            `흥미로운 해석이네요. "${userText.slice(0, 12)}"라고 느낀 이유를 책의 흐름과 연결해서 설명해볼 수 있을까요?`,
+            "그렇다면 이 책의 핵심 메시지는 감정보다 구조에서 더 잘 드러난다고 볼 수 있을까요?",
+            "좋아요. 그런데 반대로 보면 이 책이 의도적으로 모호함을 남긴 것일 수도 있지 않을까요?",
+        ][Math.min(turn - 1, 2)];
+    }
+
+    if (topicId === "emotion") {
+        return [
+            "그 감정이 생긴 장면을 다시 떠올려보면, 인물 때문이었나요 아니면 너 자신의 경험 때문이었나요?",
+            "흥미로워요. 그런데 그 감정이 꼭 긍정적인 공감만은 아니었을 수도 있지 않을까요?",
+            commonEndings[0],
+        ][Math.min(turn - 1, 2)];
+    }
+
+    if (topicId === "empathy") {
+        return [
+            "공감한 이유가 인물의 선택 때문인지, 상황 자체 때문인지 나눠서 생각해볼 수 있을까요?",
+            "반대로 가장 거리감이 느껴졌던 인물이나 장면은 없었나요?",
+            commonEndings[2],
+        ][Math.min(turn - 1, 2)];
+    }
+
+    if (topicId === "critic") {
+        return [
+            "좋아요. 그 부분이 아쉽게 느껴진 이유를 기준으로 삼으면, 이 책의 한계는 무엇이라고 생각하나요?",
+            "그런데 반대로 저자의 선택을 옹호해본다면 어떤 논리도 가능할까요?",
+            commonEndings[1],
+        ][Math.min(turn - 1, 2)];
+    }
+
+    return [
+        "좋아요. 그 생각을 조금 더 확장해서 새로운 관점으로 연결해볼 수 있을까요?",
+        "만약 이 책의 다음 장면을 새로 쓴다면 어떤 방향으로 이어가고 싶나요?",
+        commonEndings[0],
+    ][Math.min(turn - 1, 2)];
+};
 
 export default function AiRoomScreen() {
     const router = useRouter();
-    const { roomId: roomIdParam, bookTitle } = useLocalSearchParams<{
+    const {
+        roomId: roomIdParam,
+        bookTitle,
+        topicId = "analysis",
+        topicLabel = "분석",
+        topicDescription = "",
+        topicQuestion = "이 책을 읽고 가장 먼저 떠오른 생각은 무엇인가요?",
+        readOnly,
+    } = useLocalSearchParams<{
         roomId: string;
         bookTitle?: string;
+        reviewId?: string;
+        reviewContent?: string;
+        topicId?: string;
+        topicLabel?: string;
+        topicDescription?: string;
+        topicQuestion?: string;
+        readOnly?: string;
     }>();
 
     const roomId = parseInt(String(roomIdParam), 10);
+    const isReadOnly = String(readOnly) === "true";
+
+    const flatListRef = useRef<FlatList<AiMessage>>(null);
+
+    const STORAGE_KEY = useMemo(() => `mock_ai_room_${roomId}`, [roomId]);
+    const COMPLETED_KEY = useMemo(() => `mock_ai_room_completed_${roomId}`, [roomId]);
 
     const [messages, setMessages] = useState<AiMessage[]>([]);
     const [isSending, setIsSending] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-    const [isExiting, setIsExiting] = useState(false);
-    const flatListRef = useRef<FlatList<AiMessage>>(null);
+    const [isFinishing, setIsFinishing] = useState(false);
 
     useEffect(() => {
-        if (!roomId || Number.isNaN(roomId)) return;
+        if (!roomId || Number.isNaN(roomId)) {
+            setIsLoadingHistory(false);
+            return;
+        }
 
         (async () => {
             try {
-                await startAiSession(roomId).catch((e) =>
-                    console.warn("세션 시작 실패 (무시):", e)
-                );
+                const saved = await AsyncStorage.getItem(STORAGE_KEY);
 
-                const res = await getAiMessages(roomId);
-
-                const normalized: AiMessage[] = (res.data ?? []).map((m) => ({
-                    id: m.messageId,
-                    roomId,
-                    sender: m.role === "USER" ? "ME" : "AI",
-                    text: m.content,
-                    createdAt: m.createdAt,
-                }));
-
-                setMessages(normalized);
+                if (saved) {
+                    const parsed: AiMessage[] = JSON.parse(saved);
+                    setMessages(parsed);
+                } else {
+                    const firstAiMessage: AiMessage = {
+                        id: Date.now(),
+                        roomId,
+                        sender: "AI",
+                        text: String(topicQuestion),
+                        createdAt: new Date().toISOString(),
+                    };
+                    setMessages([firstAiMessage]);
+                    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify([firstAiMessage]));
+                }
             } catch (e) {
-                console.error("메시지 로드 실패:", e);
-                Alert.alert("오류", "이전 대화를 불러오지 못했습니다.");
+                console.error("대화 불러오기 실패:", e);
+                Alert.alert("오류", "대화를 불러오지 못했습니다.");
             } finally {
                 setIsLoadingHistory(false);
             }
         })();
-    }, [roomId]);
+    }, [roomId, STORAGE_KEY, topicQuestion]);
+
+    useEffect(() => {
+        if (isLoadingHistory) return;
+
+        AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(messages)).catch((e) =>
+            console.warn("대화 저장 실패:", e)
+        );
+    }, [messages, isLoadingHistory, STORAGE_KEY]);
 
     const onSend = useCallback(
         async (text: string) => {
-            if (isSending || isExiting || !text.trim()) return;
+            if (!text.trim() || isSending || isFinishing || isReadOnly) return;
 
             setIsSending(true);
 
-            const tempUserMsg: AiMessage = {
+            const userMessage: AiMessage = {
                 id: Date.now(),
                 roomId,
                 sender: "ME",
@@ -85,114 +173,66 @@ export default function AiRoomScreen() {
                 createdAt: new Date().toISOString(),
             };
 
-            setMessages((prev) => [...prev, tempUserMsg]);
+            const nextMessages = [...messages, userMessage];
+            setMessages(nextMessages);
 
-            try {
-                const res = await sendAiMessage(roomId, text);
+            setTimeout(() => {
+                const userTurnCount = nextMessages.filter((m) => m.sender === "ME").length;
 
                 const aiMessage: AiMessage = {
-                    id: res.data.messageId,
-                    sender: "AI",
-                    text: res.data.content,
-                    createdAt: res.data.createdAt,
+                    id: Date.now() + 1,
                     roomId,
+                    sender: "AI",
+                    text: buildAiReply(String(topicId), text, userTurnCount),
+                    createdAt: new Date().toISOString(),
                 };
 
-                setMessages((prev) => [
-                    ...prev.filter((m) => m.id !== tempUserMsg.id),
-                    tempUserMsg,
-                    aiMessage,
-                ]);
-            } catch (e: any) {
-                setMessages((prev) => prev.filter((m) => m.id !== tempUserMsg.id));
-                Alert.alert("전송 실패", e?.message ?? "메시지 전송에 실패했습니다.");
-            } finally {
+                setMessages((prev) => [...prev, aiMessage]);
                 setIsSending(false);
+
                 setTimeout(() => {
                     flatListRef.current?.scrollToEnd({ animated: true });
-                }, 100);
-            }
+                }, 80);
+            }, 900);
         },
-        [isSending, isExiting, roomId]
+        [isSending, isFinishing, messages, roomId, topicId, isReadOnly]
     );
 
-    const goChatIndex = useCallback(() => {
-        router.replace("/(tabs)/chat");
+    const handleBack = useCallback(() => {
+        router.back();
     }, [router]);
 
-    const handleSaveAndExit = useCallback(async () => {
-        if (isExiting) return;
+    const handleFinish = useCallback(async () => {
+        if (isFinishing || isReadOnly) return;
 
         try {
-            setIsExiting(true);
-            await saveAiSession(roomId);
-            goChatIndex();
-        } catch (e: any) {
-            console.error("세션 저장 실패:", e);
-            Alert.alert("오류", e?.message ?? "채팅 저장 후 나가기에 실패했습니다.");
+            setIsFinishing(true);
+            await AsyncStorage.setItem(COMPLETED_KEY, "true");
+
+            const raw = await AsyncStorage.getItem(COMPLETED_META_KEY);
+            const parsed: CompletedChatMeta[] = raw ? JSON.parse(raw) : [];
+
+            const nextItem: CompletedChatMeta = {
+                roomId,
+                bookTitle: String(bookTitle ?? "AI 채팅"),
+                topicLabel: String(topicLabel ?? "분석"),
+                topicDescription: String(topicDescription ?? ""),
+                completedAt: new Date().toISOString(),
+            };
+
+            const deduped = parsed.filter((item) => item.roomId !== roomId);
+            deduped.unshift(nextItem);
+
+            await AsyncStorage.setItem(COMPLETED_META_KEY, JSON.stringify(deduped));
+
+            router.replace("/(profile)/library");
+        } catch (e) {
+            console.error("완료 처리 실패:", e);
+            Alert.alert("오류", "완료 처리에 실패했습니다.");
         } finally {
-            setIsExiting(false);
+            setIsFinishing(false);
         }
-    }, [isExiting, roomId, goChatIndex]);
-
-    const handleFinishAndExit = useCallback(async () => {
-        if (isExiting) return;
-
-        try {
-            setIsExiting(true);
-            await finishAiSession(roomId);
-            goChatIndex();
-        } catch (e: any) {
-            console.error("완독 처리 실패:", e);
-            Alert.alert("오류", e?.message ?? "완독 처리에 실패했습니다.");
-        } finally {
-            setIsExiting(false);
-        }
-    }, [isExiting, roomId, goChatIndex]);
-
-    const handleDiscardAndExit = useCallback(async () => {
-        if (isExiting) return;
-
-        try {
-            setIsExiting(true);
-            await discardAiRoom(roomId);
-            goChatIndex();
-        } catch (e: any) {
-            console.error("채팅방 삭제 실패:", e);
-            Alert.alert("오류", e?.message ?? "채팅방 삭제에 실패했습니다.");
-        } finally {
-            setIsExiting(false);
-        }
-    }, [isExiting, roomId, goChatIndex]);
-
-    const openExitDialog = useCallback(() => {
-        if (isExiting) return;
-
-        Alert.alert(
-            "채팅방 나가기",
-            "",
-            [
-                {
-                    text: "채팅 저장 후 나중에 이어하기",
-                    onPress: handleSaveAndExit,
-                },
-                {
-                    text: "채팅 완료하기 (완독 처리)",
-                    onPress: handleFinishAndExit,
-                },
-                {
-                    text: "저장하지 않고 나가기",
-                    style: "destructive",
-                    onPress: handleDiscardAndExit,
-                },
-                {
-                    text: "취소",
-                    style: "cancel",
-                },
-            ],
-            { cancelable: true }
-        );
-    }, [isExiting, handleSaveAndExit, handleFinishAndExit, handleDiscardAndExit]);
+    }, [COMPLETED_KEY, isFinishing, isReadOnly, roomId, bookTitle, topicLabel, topicDescription, router]);
 
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
@@ -208,16 +248,88 @@ export default function AiRoomScreen() {
                             justifyContent: "space-between",
                         }}
                     >
-                        <Pressable onPress={openExitDialog} hitSlop={10} disabled={isExiting}>
+                        <Pressable onPress={handleBack} hitSlop={10}>
                             <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
                         </Pressable>
 
-                        <Text style={{ color: COLORS.primary, fontWeight: "900" }}>
+                        <Text
+                            style={{ color: COLORS.primary, fontWeight: "900", maxWidth: "62%" }}
+                            numberOfLines={1}
+                        >
                             {bookTitle ?? "AI 채팅"}
                         </Text>
 
-                        <View style={{ width: 22 }} />
+                        {isReadOnly ? (
+                            <View style={{ minWidth: 32 }} />
+                        ) : (
+                            <Pressable
+                                onPress={handleFinish}
+                                disabled={isFinishing}
+                                hitSlop={10}
+                                style={{
+                                    minWidth: 32,
+                                    alignItems: "flex-end",
+                                }}
+                            >
+                                <Text
+                                    style={{
+                                        color: COLORS.primary,
+                                        fontWeight: "900",
+                                        opacity: isFinishing ? 0.45 : 1,
+                                    }}
+                                >
+                                    완료
+                                </Text>
+                            </Pressable>
+                        )}
                     </View>
+                </View>
+
+                <View
+                    style={{
+                        marginHorizontal: 16,
+                        marginBottom: 10,
+                        borderRadius: 14,
+                        backgroundColor: COLORS.white,
+                        borderWidth: 1,
+                        borderColor: COLORS.border,
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                        gap: 4,
+                    }}
+                >
+                    <Text
+                        style={{
+                            color: COLORS.muted,
+                            fontSize: 12,
+                            fontWeight: "800",
+                        }}
+                    >
+                        선택 주제
+                    </Text>
+
+                    <Text
+                        style={{
+                            color: COLORS.primary,
+                            fontSize: 15,
+                            fontWeight: "900",
+                        }}
+                    >
+                        {topicLabel}
+                    </Text>
+
+                    {!!topicDescription && (
+                        <Text
+                            style={{
+                                color: COLORS.muted,
+                                fontSize: 12,
+                                lineHeight: 18,
+                                fontWeight: "700",
+                            }}
+                        >
+                            {topicDescription}
+                        </Text>
+                    )}
                 </View>
 
                 {isLoadingHistory ? (
@@ -244,7 +356,7 @@ export default function AiRoomScreen() {
                     />
                 )}
 
-                {(isSending || isExiting) && (
+                {(isSending || isFinishing) && (
                     <View
                         style={{
                             paddingHorizontal: 16,
@@ -256,12 +368,14 @@ export default function AiRoomScreen() {
                     >
                         <ActivityIndicator size="small" color={COLORS.primary} />
                         <Text style={{ color: COLORS.muted, fontSize: 12 }}>
-                            {isSending ? "AI가 응답 중..." : "처리 중..."}
+                            {isSending ? "AI가 응답 중..." : "완료 처리 중..."}
                         </Text>
                     </View>
                 )}
 
-                <ChatInput onSend={onSend} disabled={isSending || isExiting} />
+                {!isReadOnly && (
+                    <ChatInput onSend={onSend} disabled={isSending || isFinishing} />
+                )}
             </KeyboardAvoidingView>
         </SafeAreaView>
     );

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
     View,
     Text,
@@ -29,6 +29,15 @@ type ReviewDetail = {
     updatedAt?: string;
 };
 
+function formatDateText(value?: string) {
+    if (!value) return "날짜 정보 없음";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(
+        d.getDate()
+    ).padStart(2, "0")}`;
+}
+
 export default function ReviewDetailScreen() {
     const router = useRouter();
     const { reviewId } = useLocalSearchParams<{ reviewId: string }>();
@@ -53,6 +62,8 @@ export default function ReviewDetailScreen() {
 
         loadDetail();
     }, [reviewId]);
+
+    const createdDateText = useMemo(() => formatDateText(review?.createdAt), [review?.createdAt]);
 
     return (
         <>
@@ -95,6 +106,7 @@ export default function ReviewDetailScreen() {
                             />
                             <Text style={styles.title}>{review.bookTitle}</Text>
                             <Text style={styles.author}>{review.author ?? "저자 정보 없음"}</Text>
+                            <Text style={styles.dateText}>작성일 {createdDateText}</Text>
                         </View>
 
                         <View style={styles.reviewCard}>
@@ -103,6 +115,24 @@ export default function ReviewDetailScreen() {
                                 {review.content?.trim() || "작성된 독후감이 없습니다."}
                             </Text>
                         </View>
+
+                        <Pressable
+                            onPress={() =>
+                                router.push({
+                                    pathname: "/(tabs)/chat/ai-create",
+                                    params: {
+                                        prefillBookTitle: review.bookTitle,
+                                        prefillReviewId: String(review.id),
+                                    },
+                                })
+                            }
+                            style={({ pressed }) => [
+                                styles.ctaButton,
+                                pressed && { opacity: 0.92 },
+                            ]}
+                        >
+                            <Text style={styles.ctaText}>이 독후감으로 AI 채팅 시작하기</Text>
+                        </Pressable>
                     </ScrollView>
                 )}
             </View>
@@ -136,11 +166,12 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         paddingTop: 18,
         paddingBottom: 28,
+        gap: 16,
     },
 
     bookBlock: {
         alignItems: "center",
-        marginBottom: 20,
+        marginBottom: 4,
     },
 
     cover: {
@@ -167,6 +198,13 @@ const styles = StyleSheet.create({
         color: COLORS.neutralDark,
     },
 
+    dateText: {
+        marginTop: 6,
+        fontSize: 12,
+        fontWeight: "700",
+        color: COLORS.neutralDark,
+    },
+
     reviewCard: {
         borderRadius: 16,
         borderWidth: 1,
@@ -187,5 +225,20 @@ const styles = StyleSheet.create({
         lineHeight: 24,
         fontWeight: "700",
         color: COLORS.primary,
+    },
+
+    ctaButton: {
+        height: 52,
+        borderRadius: 14,
+        backgroundColor: COLORS.primary,
+        alignItems: "center",
+        justifyContent: "center",
+        marginTop: 4,
+    },
+
+    ctaText: {
+        color: COLORS.bg,
+        fontSize: 15,
+        fontWeight: "900",
     },
 });
