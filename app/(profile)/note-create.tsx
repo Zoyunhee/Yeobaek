@@ -26,6 +26,7 @@ type Book = {
     author: string;
     coverImage?: string;
     publisher?: string;
+    description?: string;
 };
 
 const BOOK_COVER = require("../../assets/images/book-cover.png");
@@ -55,7 +56,7 @@ export default function NoteCreateScreen() {
         try {
             setLoading(true);
 
-            const res = await searchBooks(q, 1, 10);
+            const res = await searchBooks(q);
 
             const mapped: Book[] = (res.items ?? []).map((item, index) => ({
                 id: `${item.isbn}-${index}`,
@@ -64,6 +65,7 @@ export default function NoteCreateScreen() {
                 author: item.authors?.join(", ") ?? "저자 미상",
                 coverImage: item.thumbnail,
                 publisher: item.publisher,
+                description: item.contents,
             }));
 
             setResults(mapped);
@@ -114,6 +116,7 @@ export default function NoteCreateScreen() {
             author: selected.author,
             coverImage: selected.coverImage,
             publisher: selected.publisher,
+            description: selected.description,
             content: reviewContent.trim(),
         });
 
@@ -136,25 +139,30 @@ export default function NoteCreateScreen() {
     };
 
     const onSaveAndChat = async () => {
-        if (!canSave) return;
+        if (!canSave || submitting) return;
 
         try {
             setSubmitting(true);
-            const saved = await saveReview();
 
-            Alert.alert("완료", "독후감 저장 후 AI 채팅으로 이동합니다.");
+            const saved = await saveReview();
+            const reviewId = Number(saved.data?.id);
+
+            if (!reviewId) {
+                throw new Error("저장된 독후감 ID를 확인할 수 없습니다.");
+            }
 
             router.push({
-                pathname: "/chat",
+                pathname: "/(tabs)/chat/ai-create",
                 params: {
-                    reviewId: String(saved.data?.id ?? ""),
-                    bookTitle: selected?.title ?? "",
-                    isbn: selected?.isbn ?? "",
-                    mode: "review",
+                    prefillReviewId: String(reviewId),
+                    prefillBookTitle: selected?.title ?? "",
                 },
-            });
+            } as never);
         } catch (e) {
-            Alert.alert("오류", e instanceof Error ? e.message : "저장 후 AI 채팅 이동 실패");
+            Alert.alert(
+                "오류",
+                e instanceof Error ? e.message : "발제문 생성 중 오류가 발생했습니다."
+            );
         } finally {
             setSubmitting(false);
         }
@@ -305,7 +313,7 @@ export default function NoteCreateScreen() {
                             ]}
                         >
                             <Text style={styles.primaryBtnText}>
-                                {submitting ? "처리 중..." : "저장 후 AI 채팅"}
+                                {submitting ? "처리 중..." : "AI 채팅 가기"}
                             </Text>
                         </Pressable>
                     </View>

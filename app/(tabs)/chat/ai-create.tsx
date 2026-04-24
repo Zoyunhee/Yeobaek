@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -12,140 +12,19 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { COLORS } from "@/constants/colors";
 import SearchBar from "@/components/ui/SearchBar";
 import AppButton from "@/components/ui/AppButton";
-import { type BookSearchItem, searchBooks } from "@/services/api";
-
-type ReviewItem = {
-    id: number;
-    bookTitle: string;
-    author?: string;
-    createdAt: string;
-    content: string;
-};
-
-type TopicItem = {
-    id: string;
-    label: string;
-    description: string;
-    firstQuestion: string;
-};
-
-const MOCK_REVIEWS: ReviewItem[] = [
-    {
-        id: 101,
-        bookTitle: "어린왕자",
-        author: "생텍쥐페리",
-        createdAt: "2025.06.14",
-        content:
-            "겉으로 단순한 이야기처럼 보였지만 관계와 책임, 그리고 어른이 된다는 것에 대해 다시 생각하게 됐다. 나는 특히 여우와의 관계가 가장 오래 남았다.",
-    },
-    {
-        id: 102,
-        bookTitle: "코스모스",
-        author: "칼 세이건",
-        createdAt: "2025.06.21",
-        content:
-            "우주를 설명하는 방식이 단순한 과학 지식 전달이 아니라 인간의 시야를 넓혀주는 느낌이었다. 감탄도 컸지만 생각보다 논리적인 구조가 인상 깊었다.",
-    },
-    {
-        id: 103,
-        bookTitle: "사피엔스",
-        author: "유발 하라리",
-        createdAt: "2025.06.28",
-        content:
-            "인류의 역사를 하나의 흐름으로 연결해서 보는 시선이 흥미로웠다. 동의되는 부분도 많았지만 몇몇 주장에는 의문도 들었다.",
-    },
-    {
-        id: 104,
-        bookTitle: "데미안",
-        author: "헤르만 헤세",
-        createdAt: "2025.07.02",
-        content:
-            "성장 과정에서 흔들리는 자아를 따라가면서 내 경험도 많이 떠올랐다. 다만 상징이 많아서 해석이 쉽지는 않았고 여러 관점이 가능하다고 느꼈다.",
-    },
-];
-
-function buildMockTopics(review: ReviewItem | null): TopicItem[] {
-    const text = review?.content ?? "";
-
-    if (text.includes("논리") || text.includes("구조") || text.includes("의문")) {
-        return [
-            {
-                id: "analysis",
-                label: "분석",
-                description: "책의 주장과 구조를 중심으로 생각해보는 주제",
-                firstQuestion:
-                    "이 책이 전달하는 핵심 주장 중 가장 설득력 있었던 부분은 무엇이었나요?",
-            },
-            {
-                id: "critic",
-                label: "비평",
-                description: "동의와 반박의 지점을 살펴보는 주제",
-                firstQuestion:
-                    "이 책에서 공감은 갔지만 완전히 동의되지는 않았던 부분이 있었나요?",
-            },
-            {
-                id: "creative",
-                label: "창의",
-                description: "새로운 관점으로 확장해보는 주제",
-                firstQuestion:
-                    "이 책의 내용을 지금의 현실 문제와 연결한다면 어떤 장면이 가장 먼저 떠오르나요?",
-            },
-        ];
-    }
-
-    if (text.includes("관계") || text.includes("감정") || text.includes("경험")) {
-        return [
-            {
-                id: "emotion",
-                label: "감정",
-                description: "읽는 동안 생긴 감정의 흐름을 살펴보는 주제",
-                firstQuestion:
-                    "이 책을 읽으며 가장 강하게 남은 감정은 무엇이었고, 왜 그렇게 느꼈나요?",
-            },
-            {
-                id: "empathy",
-                label: "공감",
-                description: "인물과 상황에 대한 공감에 집중하는 주제",
-                firstQuestion:
-                    "가장 공감됐던 인물이나 장면은 무엇이었나요? 그리고 그 이유는 무엇인가요?",
-            },
-            {
-                id: "critic",
-                label: "비평",
-                description: "공감과 거리감을 함께 살펴보는 주제",
-                firstQuestion:
-                    "공감은 갔지만 조금 다르게 보고 싶었던 장면이나 선택도 있었나요?",
-            },
-        ];
-    }
-
-    return [
-        {
-            id: "analysis",
-            label: "분석",
-            description: "내용의 구조와 논리를 살펴보는 주제",
-            firstQuestion:
-                "이 책을 한 문장으로 정리한다면 무엇이고, 그렇게 생각한 이유는 무엇인가요?",
-        },
-        {
-            id: "empathy",
-            label: "공감",
-            description: "감정과 인물 이해를 중심으로 한 주제",
-            firstQuestion:
-                "읽는 동안 가장 오래 남은 장면은 무엇이었고, 그 장면이 왜 기억에 남았나요?",
-        },
-        {
-            id: "creative",
-            label: "창의",
-            description: "책을 나만의 방식으로 확장하는 주제",
-            firstQuestion:
-                "이 책 뒤에 이어질 다음 장면을 상상한다면 어떤 이야기가 펼쳐질 것 같나요?",
-        },
-    ];
-}
+import {
+    type BookSearchItem,
+    type BookReviewItem,
+    type TopicItem,
+    searchBooks,
+    getBookReviews,
+    createAiRoom, prepareTopics,
+} from "@/services/api";
 
 export default function AiCreateScreen() {
     const router = useRouter();
@@ -159,13 +38,17 @@ export default function AiCreateScreen() {
     const [isSearching, setIsSearching] = useState(false);
 
     const [selectedBook, setSelectedBook] = useState<BookSearchItem | null>(null);
+
+    const [reviews, setReviews] = useState<BookReviewItem[]>([]);
+    const [isLoadingReviews, setIsLoadingReviews] = useState(false);
     const [selectedReviewId, setSelectedReviewId] = useState<number | null>(
         prefillReviewId ? Number(prefillReviewId) : null
     );
 
     const [topicModalVisible, setTopicModalVisible] = useState(false);
     const [topics, setTopics] = useState<TopicItem[]>([]);
-    const [isCreating, setIsCreating] = useState(false);
+    const [isLoadingTopics, setIsLoadingTopics] = useState(false);
+    const [isCreatingRoom, setIsCreatingRoom] = useState(false);
 
     useEffect(() => {
         if (!query.trim()) {
@@ -174,8 +57,8 @@ export default function AiCreateScreen() {
         }
 
         const timer = setTimeout(async () => {
-            setIsSearching(true);
             try {
+                setIsSearching(true);
                 const res = await searchBooks(query.trim());
                 const items = res.items ?? [];
                 setSearchResults(items);
@@ -198,69 +81,157 @@ export default function AiCreateScreen() {
         return () => clearTimeout(timer);
     }, [query, prefillBookTitle, selectedBook]);
 
-    const displayList = query.trim() ? searchResults : [];
+    useEffect(() => {
+        let mounted = true;
 
-    const filteredReviews = useMemo(() => {
-        const baseTitle = selectedBook?.title ?? prefillBookTitle;
-        if (!baseTitle) return [];
-        return MOCK_REVIEWS.filter((review) => review.bookTitle === baseTitle);
-    }, [selectedBook, prefillBookTitle]);
+        async function loadReviews() {
+            const baseTitle = selectedBook?.title ?? prefillBookTitle;
+            if (!baseTitle) {
+                setReviews([]);
+                return;
+            }
+
+            try {
+                setIsLoadingReviews(true);
+
+                const rawUser = await AsyncStorage.getItem("user");
+                if (!rawUser) throw new Error("로그인 정보가 없습니다.");
+
+                const user = JSON.parse(rawUser);
+                const userId = Number(user.id);
+
+                if (!userId) throw new Error("사용자 정보가 올바르지 않습니다.");
+
+                const res = await getBookReviews(userId);
+                if (!mounted || !res.success) return;
+
+                const filtered = (res.data ?? []).filter((review) => {
+                    if (selectedBook?.isbn) {
+                        return review.bookIsbn === selectedBook.isbn;
+                    }
+                    return review.bookTitle === baseTitle;
+                });
+
+                setReviews(filtered);
+
+                if (prefillReviewId) {
+                    const targetId = Number(prefillReviewId);
+                    const found = filtered.find((item) => item.id === targetId);
+                    if (found) {
+                        setSelectedReviewId(found.id);
+                        return;
+                    }
+                }
+
+                if (!selectedReviewId && filtered.length > 0) {
+                    setSelectedReviewId(filtered[0].id);
+                }
+            } catch (e) {
+                console.error("독후감 목록 조회 실패:", e);
+                if (mounted) setReviews([]);
+            } finally {
+                if (mounted) setIsLoadingReviews(false);
+            }
+        }
+
+        loadReviews();
+
+        return () => {
+            mounted = false;
+        };
+    }, [selectedBook, prefillBookTitle, prefillReviewId]);
 
     const selectedReview =
-        filteredReviews.find((review) => review.id === selectedReviewId) ?? null;
+        reviews.find((review) => review.id === selectedReviewId) ?? null;
 
-    useEffect(() => {
-        if (!prefillReviewId) return;
-        const found = filteredReviews.find((item) => item.id === Number(prefillReviewId));
-        if (found) {
-            setSelectedReviewId(found.id);
-        }
-    }, [filteredReviews, prefillReviewId]);
-
-    const openTopicModal = useCallback(() => {
-        if (!selectedBook && !prefillBookTitle) {
-            Alert.alert("도서를 선택해주세요");
-            return;
-        }
-
+    const openTopicModal = useCallback(async () => {
         if (!selectedReview) {
-            Alert.alert("독후감을 선택해주세요");
+            Alert.alert("안내", "독후감을 선택해주세요.");
             return;
         }
 
-        setIsCreating(true);
+        try {
+            setIsLoadingTopics(true);
 
-        const nextTopics = buildMockTopics(selectedReview);
-        setTopics(nextTopics);
+            const res = await prepareTopics(selectedReview.id);
+            const topicList = res.data ?? [];
 
-        setTimeout(() => {
+            if (!topicList.length) {
+                Alert.alert("안내", "생성된 발제문이 없습니다. 먼저 독후감 분석/발제문 생성을 진행해주세요.");
+                return;
+            }
+
+            setTopics(topicList);
             setTopicModalVisible(true);
-            setIsCreating(false);
-        }, 250);
-    }, [selectedBook, prefillBookTitle, selectedReview]);
+        } catch (e) {
+            console.error("발제문 조회 실패:", e);
+            Alert.alert("오류", e instanceof Error ? e.message : "발제문 조회 실패");
+        } finally {
+            setIsLoadingTopics(false);
+        }
+    }, [selectedReview]);
 
     const handleSelectTopic = useCallback(
-        (topic: TopicItem) => {
-            setTopicModalVisible(false);
+        async (topic: TopicItem) => {
+            if (!selectedReview) return;
 
-            const mockRoomId = Date.now();
+            try {
+                setIsCreatingRoom(true);
 
-            router.replace({
-                pathname: "/(tabs)/chat/ai-room",
-                params: {
-                    roomId: String(mockRoomId),
-                    bookTitle: selectedBook?.title ?? prefillBookTitle ?? "AI 채팅",
-                    reviewId: String(selectedReview?.id ?? ""),
-                    reviewContent: selectedReview?.content ?? "",
-                    topicId: topic.id,
-                    topicLabel: topic.label,
-                    topicDescription: topic.description,
-                    topicQuestion: topic.firstQuestion,
-                },
-            } as never);
+                const rawUser = await AsyncStorage.getItem("user");
+                if (!rawUser) throw new Error("로그인 정보가 없습니다.");
+
+                const user = JSON.parse(rawUser);
+                const userId = Number(user.id);
+
+                if (!userId) {
+                    throw new Error("사용자 정보가 올바르지 않습니다.");
+                }
+
+                const numericTopicId = Number(topic.id);
+                if (!numericTopicId) {
+                    throw new Error("발제문 ID가 올바르지 않습니다.");
+                }
+
+                const created = await createAiRoom({
+                    userId,
+                    reviewId: selectedReview.id,
+                    topicId: numericTopicId,
+                });
+
+                const roomId = Number(created.roomId ?? 0);
+
+                if (!roomId) {
+                    throw new Error("채팅방 ID를 받지 못했습니다.");
+                }
+
+                setTopicModalVisible(false);
+
+                router.replace({
+                    pathname: "/(tabs)/chat/ai-room",
+                    params: {
+                        roomId: String(roomId),
+                        bookTitle: selectedReview.bookTitle,
+                        reviewId: String(selectedReview.id),
+                        topicId: String(topic.id),
+                        topicLabel: topic.title,
+                        topicDescription: topic.description,
+                        topicQuestion:
+                            topic.firstQuestion ||
+                            `${topic.title} 관점에서 이 책을 읽고 가장 먼저 떠오른 생각은 무엇인가요?`,
+                    },
+                } as never);
+            } catch (e) {
+                console.error("AI 채팅방 생성 실패:", e);
+                Alert.alert("오류", e instanceof Error ? e.message : "채팅방 생성 실패");
+            } finally {
+                setIsCreatingRoom(false);
+            }
         },
-        [router, selectedBook, prefillBookTitle, selectedReview]
+        [router, selectedReview]
     );
+
+    const displayList = query.trim() ? searchResults : [];
 
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
@@ -303,6 +274,11 @@ export default function AiCreateScreen() {
                     {selectedBook?.thumbnail ? (
                         <Image
                             source={{ uri: selectedBook.thumbnail }}
+                            style={{ width: "100%", height: "100%" }}
+                        />
+                    ) : selectedReview?.coverImage ? (
+                        <Image
+                            source={{ uri: selectedReview.coverImage }}
                             style={{ width: "100%", height: "100%" }}
                         />
                     ) : (
@@ -373,19 +349,16 @@ export default function AiCreateScreen() {
                                             key={`${book.isbn || "noisbn"}-${book.title || "notitle"}-${index}`}
                                             onPress={() => {
                                                 setSelectedBook(book);
+                                                setSelectedReviewId(null);
                                                 setQuery("");
                                             }}
                                             style={{
                                                 paddingVertical: 10,
                                                 paddingHorizontal: 10,
                                                 borderRadius: 10,
-                                                backgroundColor: active
-                                                    ? COLORS.mintLight
-                                                    : COLORS.bg,
+                                                backgroundColor: active ? COLORS.mintLight : COLORS.bg,
                                                 borderWidth: 1,
-                                                borderColor: active
-                                                    ? COLORS.mint
-                                                    : COLORS.border,
+                                                borderColor: active ? COLORS.mint : COLORS.border,
                                                 flexDirection: "row",
                                                 alignItems: "center",
                                                 gap: 10,
@@ -466,7 +439,21 @@ export default function AiCreateScreen() {
                                 먼저 도서를 선택해주세요
                             </Text>
                         </View>
-                    ) : filteredReviews.length === 0 ? (
+                    ) : isLoadingReviews ? (
+                        <View
+                            style={{
+                                borderRadius: 10,
+                                borderWidth: 1,
+                                borderColor: COLORS.border,
+                                backgroundColor: COLORS.bg,
+                                paddingVertical: 16,
+                                paddingHorizontal: 14,
+                                alignItems: "center",
+                            }}
+                        >
+                            <ActivityIndicator size="small" color={COLORS.primary} />
+                        </View>
+                    ) : reviews.length === 0 ? (
                         <View
                             style={{
                                 borderRadius: 10,
@@ -480,19 +467,9 @@ export default function AiCreateScreen() {
                             <Text style={{ color: COLORS.muted, textAlign: "center" }}>
                                 이 책에 연결된 독후감이 없어요
                             </Text>
-                            <Text
-                                style={{
-                                    color: COLORS.muted,
-                                    textAlign: "center",
-                                    marginTop: 4,
-                                    fontSize: 12,
-                                }}
-                            >
-                                현재는 더미 데이터 기반으로 연결되어 있습니다
-                            </Text>
                         </View>
                     ) : (
-                        filteredReviews.map((review) => {
+                        reviews.map((review) => {
                             const active = selectedReviewId === review.id;
 
                             return (
@@ -503,9 +480,7 @@ export default function AiCreateScreen() {
                                         borderRadius: 12,
                                         borderWidth: 1,
                                         borderColor: active ? COLORS.mint : COLORS.border,
-                                        backgroundColor: active
-                                            ? COLORS.mintLight
-                                            : COLORS.secondary,
+                                        backgroundColor: active ? COLORS.mintLight : COLORS.secondary,
                                         padding: 12,
                                         gap: 6,
                                     }}
@@ -532,7 +507,9 @@ export default function AiCreateScreen() {
                                                 fontWeight: "700",
                                             }}
                                         >
-                                            {review.createdAt}
+                                            {review.createdAt
+                                                ? new Date(review.createdAt).toLocaleDateString()
+                                                : ""}
                                         </Text>
                                     </View>
 
@@ -541,7 +518,6 @@ export default function AiCreateScreen() {
                                             color: COLORS.primary,
                                             fontSize: 13,
                                             lineHeight: 20,
-                                            fontWeight: "700",
                                         }}
                                         numberOfLines={4}
                                     >
@@ -554,9 +530,15 @@ export default function AiCreateScreen() {
                 </View>
 
                 <AppButton
-                    title={isCreating ? "주제 분석 중..." : "AI 채팅 생성"}
+                    title={
+                        isLoadingTopics
+                            ? "발제문 불러오는 중..."
+                            : isCreatingRoom
+                                ? "채팅방 만드는 중..."
+                                : "발제문 선택하고 AI 채팅 시작"
+                    }
                     onPress={openTopicModal}
-                    disabled={isCreating || (!selectedBook && !prefillBookTitle) || !selectedReview}
+                    disabled={!selectedReview || isLoadingTopics || isCreatingRoom}
                 />
             </ScrollView>
 
@@ -569,89 +551,58 @@ export default function AiCreateScreen() {
                 <View
                     style={{
                         flex: 1,
-                        backgroundColor: "rgba(0,0,0,0.28)",
+                        backgroundColor: "rgba(0,0,0,0.35)",
                         justifyContent: "center",
-                        paddingHorizontal: 22,
+                        padding: 20,
                     }}
                 >
                     <View
                         style={{
                             backgroundColor: COLORS.white,
-                            borderRadius: 22,
-                            padding: 18,
+                            borderRadius: 16,
+                            padding: 16,
                             gap: 12,
                         }}
                     >
                         <Text
                             style={{
                                 color: COLORS.primary,
-                                fontSize: 18,
+                                fontSize: 16,
                                 fontWeight: "900",
                                 textAlign: "center",
                             }}
                         >
-                            독후감 기반 추천 주제
+                            AI가 추천한 발제문
                         </Text>
 
-                        <Text
-                            style={{
-                                color: COLORS.muted,
-                                fontSize: 13,
-                                lineHeight: 20,
-                                textAlign: "center",
-                            }}
-                        >
-                            아래 3가지 주제 중 하나를 선택하면
-                            {"\n"}해당 주제가 채팅방 상단에 고정됩니다
-                        </Text>
+                        {topics.map((topic, index) => (
+                            <Pressable
+                                key={`${topic.id}-${index}`}
+                                onPress={() => handleSelectTopic(topic)}
+                                style={{
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: COLORS.border,
+                                    backgroundColor: COLORS.secondary,
+                                    padding: 14,
+                                    gap: 6,
+                                }}
+                            >
+                                <Text style={{ color: COLORS.primary, fontWeight: "900" }}>
+                                    {topic.title}
+                                </Text>
 
-                        <View style={{ gap: 10, marginTop: 6 }}>
-                            {topics.map((topic) => (
-                                <Pressable
-                                    key={topic.id}
-                                    onPress={() => handleSelectTopic(topic)}
-                                    style={{
-                                        borderRadius: 14,
-                                        borderWidth: 1,
-                                        borderColor: COLORS.border,
-                                        backgroundColor: COLORS.secondary,
-                                        padding: 14,
-                                        gap: 4,
-                                    }}
-                                >
-                                    <Text
-                                        style={{
-                                            color: COLORS.primary,
-                                            fontSize: 15,
-                                            fontWeight: "900",
-                                        }}
-                                    >
-                                        {topic.label}
-                                    </Text>
-                                    <Text
-                                        style={{
-                                            color: COLORS.muted,
-                                            fontSize: 12,
-                                            lineHeight: 18,
-                                            fontWeight: "700",
-                                        }}
-                                    >
-                                        {topic.description}
-                                    </Text>
-                                </Pressable>
-                            ))}
-                        </View>
+                                <Text style={{ color: COLORS.muted, lineHeight: 20 }}>
+                                    {topic.description}
+                                </Text>
+                            </Pressable>
+                        ))}
 
                         <Pressable
                             onPress={() => setTopicModalVisible(false)}
-                            style={{
-                                alignSelf: "center",
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                                marginTop: 4,
-                            }}
+                            style={{ alignItems: "center", paddingTop: 6 }}
                         >
-                            <Text style={{ color: COLORS.muted, fontWeight: "800" }}>닫기</Text>
+                            <Text style={{ color: COLORS.muted, fontWeight: "700" }}>닫기</Text>
                         </Pressable>
                     </View>
                 </View>

@@ -8,6 +8,9 @@ import {
     Pressable,
     Text,
     View,
+    Modal,
+    StyleSheet,
+    ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,88 +19,122 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import MessageBubble from "@/components/ui/MessageBubble";
 import ChatInput from "@/components/ui/ChatInput";
-import { type AiMessage } from "@/services/api";
+import {
+    type AiMessage,
+    getAiMessages,
+    sendAiMessage,
+    completeDiagnosis,
+    getDiagnosisLatest,
+} from "@/services/api";
 
 const keyExtractor = (item: AiMessage) => `${item.id}`;
-const COMPLETED_META_KEY = "mock_completed_ai_chats";
 
-type CompletedChatMeta = {
-    roomId: number;
-    bookTitle: string;
-    topicLabel: string;
-    topicDescription?: string;
-    completedAt: string;
+type DiagnosisCardData = {
+    topType: string;
+    middleType: string;
+    growthType: string;
+    summaryComment: string;
+    conversationSummary: string[];
+    hashtags: string[];
+    scores: {
+        emotion: number;
+        analysis: number;
+        criticism: number;
+        empathy: number;
+        creativity: number;
+    };
 };
 
-const buildAiReply = (
-    topicId: string,
-    userText: string,
-    turn: number
-): string => {
-    const commonEndings = [
-        "조금 더 구체적으로 떠올려볼 수 있을까요?",
-        "반대로 보면 다른 해석도 가능할까요?",
-        "그 생각의 근거가 된 장면이 있었나요?",
+function mapThinkingTypeToKorean(type?: string) {
+    switch (type) {
+        case "EMOTION":
+            return "감정형";
+        case "ANALYSIS":
+            return "분석형";
+        case "CRITICISM":
+            return "비평형";
+        case "EMPATHY":
+            return "공감형";
+        case "CREATIVITY":
+            return "창의형";
+        default:
+            return "분석 중";
+    }
+}
+
+function isLikelyClosingMessage(text?: string) {
+    if (!text) return false;
+
+    const normalized = text.replace(/\s/g, "");
+    const markers = [
+        "오늘은여기까지",
+        "여기까지나눠요",
+        "여기까지할게요",
+        "마무리해볼까요",
+        "함께고민해줘서고마워요",
+        "수고하셨습니다",
+        "대화를마칠게요",
+        "마무리하겠습니다",
+        "정리해보면",
     ];
 
-    if (turn >= 4) {
-        return "좋아요. 오늘 대화는 여기까지 해볼게요. 이번 대화는 자가진단에 반영될 예정이에요.";
+    return markers.some((marker) => normalized.includes(marker));
+}
+
+function buildConversationSummary(messages: AiMessage[]) {
+    const userTexts = messages
+        .filter((m) => m.sender === "ME")
+        .map((m) => m.text.trim())
+        .filter(Boolean);
+
+    const aiTexts = messages
+        .filter((m) => m.sender === "AI")
+        .map((m) => m.text.trim())
+        .filter(Boolean);
+
+    const firstUser = userTexts[0] ?? "";
+    const lastUser = userTexts[userTexts.length - 1] ?? "";
+    const lastAi = aiTexts[aiTexts.length - 1] ?? "";
+
+    const lines: string[] = [];
+
+    if (firstUser) {
+        lines.push(`처음에는 "${firstUser.slice(0, 28)}${firstUser.length > 28 ? "…" : ""}" 라는 생각에서 시작했어요.`);
     }
 
-    if (topicId === "analysis") {
-        return [
-            `흥미로운 해석이네요. "${userText.slice(0, 12)}"라고 느낀 이유를 책의 흐름과 연결해서 설명해볼 수 있을까요?`,
-            "그렇다면 이 책의 핵심 메시지는 감정보다 구조에서 더 잘 드러난다고 볼 수 있을까요?",
-            "좋아요. 그런데 반대로 보면 이 책이 의도적으로 모호함을 남긴 것일 수도 있지 않을까요?",
-        ][Math.min(turn - 1, 2)];
+    if (lastUser && lastUser !== firstUser) {
+        lines.push(`대화 끝에서는 "${lastUser.slice(0, 28)}${lastUser.length > 28 ? "…" : ""}" 쪽으로 관점이 정리됐어요.`);
     }
 
-    if (topicId === "emotion") {
-        return [
-            "그 감정이 생긴 장면을 다시 떠올려보면, 인물 때문이었나요 아니면 너 자신의 경험 때문이었나요?",
-            "흥미로워요. 그런데 그 감정이 꼭 긍정적인 공감만은 아니었을 수도 있지 않을까요?",
-            commonEndings[0],
-        ][Math.min(turn - 1, 2)];
+    if (!lines.length && lastAi) {
+        lines.push("이번 대화에서 책에 대한 생각을 한 단계 더 구체적으로 말해보았어요.");
     }
 
-    if (topicId === "empathy") {
-        return [
-            "공감한 이유가 인물의 선택 때문인지, 상황 자체 때문인지 나눠서 생각해볼 수 있을까요?",
-            "반대로 가장 거리감이 느껴졌던 인물이나 장면은 없었나요?",
-            commonEndings[2],
-        ][Math.min(turn - 1, 2)];
-    }
+    return lines.slice(0, 2);
+}
 
-    if (topicId === "critic") {
-        return [
-            "좋아요. 그 부분이 아쉽게 느껴진 이유를 기준으로 삼으면, 이 책의 한계는 무엇이라고 생각하나요?",
-            "그런데 반대로 저자의 선택을 옹호해본다면 어떤 논리도 가능할까요?",
-            commonEndings[1],
-        ][Math.min(turn - 1, 2)];
-    }
-
-    return [
-        "좋아요. 그 생각을 조금 더 확장해서 새로운 관점으로 연결해볼 수 있을까요?",
-        "만약 이 책의 다음 장면을 새로 쓴다면 어떤 방향으로 이어가고 싶나요?",
-        commonEndings[0],
-    ][Math.min(turn - 1, 2)];
+const emptyScores = {
+    emotion: 0,
+    analysis: 0,
+    criticism: 0,
+    empathy: 0,
+    creativity: 0,
 };
 
 export default function AiRoomScreen() {
     const router = useRouter();
+    const flatListRef = useRef<FlatList<AiMessage>>(null);
+    const hasOpenedSummaryRef = useRef(false);
+
     const {
         roomId: roomIdParam,
         bookTitle,
-        topicId = "analysis",
         topicLabel = "분석",
         topicDescription = "",
-        topicQuestion = "이 책을 읽고 가장 먼저 떠오른 생각은 무엇인가요?",
         readOnly,
     } = useLocalSearchParams<{
         roomId: string;
         bookTitle?: string;
-        reviewId?: string;
-        reviewContent?: string;
         topicId?: string;
         topicLabel?: string;
         topicDescription?: string;
@@ -105,134 +142,206 @@ export default function AiRoomScreen() {
         readOnly?: string;
     }>();
 
-    const roomId = parseInt(String(roomIdParam), 10);
+    const parsedRoomId = Number(roomIdParam);
+    const roomId = Number.isFinite(parsedRoomId) && parsedRoomId > 0 ? parsedRoomId : NaN;
     const isReadOnly = String(readOnly) === "true";
 
-    const flatListRef = useRef<FlatList<AiMessage>>(null);
-
-    const STORAGE_KEY = useMemo(() => `mock_ai_room_${roomId}`, [roomId]);
-    const COMPLETED_KEY = useMemo(() => `mock_ai_room_completed_${roomId}`, [roomId]);
-
     const [messages, setMessages] = useState<AiMessage[]>([]);
-    const [isSending, setIsSending] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+    const [isSending, setIsSending] = useState(false);
     const [isFinishing, setIsFinishing] = useState(false);
 
-    useEffect(() => {
+    const [summaryVisible, setSummaryVisible] = useState(false);
+    const [diagnosisCard, setDiagnosisCard] = useState<DiagnosisCardData | null>(null);
+
+    const summaryLines = useMemo(() => {
+        if (diagnosisCard?.conversationSummary?.length) {
+            return diagnosisCard.conversationSummary;
+        }
+
+        return buildConversationSummary(messages);
+    }, [diagnosisCard?.conversationSummary, messages]);
+
+    const loadMessages = useCallback(async () => {
         if (!roomId || Number.isNaN(roomId)) {
             setIsLoadingHistory(false);
+
+            if (isReadOnly) {
+                Alert.alert("오류", "유효한 채팅방 정보가 없습니다.");
+                router.back();
+            }
+
             return;
         }
 
-        (async () => {
-            try {
-                const saved = await AsyncStorage.getItem(STORAGE_KEY);
-
-                if (saved) {
-                    const parsed: AiMessage[] = JSON.parse(saved);
-                    setMessages(parsed);
-                } else {
-                    const firstAiMessage: AiMessage = {
-                        id: Date.now(),
-                        roomId,
-                        sender: "AI",
-                        text: String(topicQuestion),
-                        createdAt: new Date().toISOString(),
-                    };
-                    setMessages([firstAiMessage]);
-                    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify([firstAiMessage]));
-                }
-            } catch (e) {
-                console.error("대화 불러오기 실패:", e);
-                Alert.alert("오류", "대화를 불러오지 못했습니다.");
-            } finally {
-                setIsLoadingHistory(false);
-            }
-        })();
-    }, [roomId, STORAGE_KEY, topicQuestion]);
+        try {
+            setIsLoadingHistory(true);
+            const res = await getAiMessages(roomId);
+            const loaded = res.data ?? [];
+            setMessages(loaded);
+        } catch (e) {
+            console.error("대화 불러오기 실패:", e);
+            Alert.alert("오류", e instanceof Error ? e.message : "대화를 불러오지 못했습니다.");
+        } finally {
+            setIsLoadingHistory(false);
+        }
+    }, [roomId, isReadOnly, router]);
 
     useEffect(() => {
-        if (isLoadingHistory) return;
+        loadMessages();
+    }, [loadMessages]);
 
-        AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(messages)).catch((e) =>
-            console.warn("대화 저장 실패:", e)
-        );
-    }, [messages, isLoadingHistory, STORAGE_KEY]);
+    const openSummaryAfterComplete = useCallback(async () => {
+        const rawUser = await AsyncStorage.getItem("auth_user_id");
+        const userId = Number(rawUser);
+
+        if (!userId) {
+            setDiagnosisCard({
+                topType: "분석 중",
+                middleType: "분석 중",
+                growthType: "분석 중",
+                summaryComment: "자가진단 결과를 불러오지 못했습니다.",
+                conversationSummary: [],
+                hashtags: [],
+                scores: emptyScores,
+            });
+            setSummaryVisible(true);
+            return;
+        }
+
+        try {
+            const latest = await getDiagnosisLatest(userId);
+            const data = latest.data;
+
+            setDiagnosisCard({
+                topType: mapThinkingTypeToKorean(data.topType),
+                middleType: mapThinkingTypeToKorean(data.middleType),
+                growthType: mapThinkingTypeToKorean(data.growthType),
+                summaryComment:
+                    data.summaryComment || "대화가 종료되고 자가진단이 생성되었습니다.",
+                conversationSummary: data.conversationSummary ?? [],
+                hashtags: data.hashtags ?? [],
+                scores: {
+                    emotion: data.emotionScore ?? 0,
+                    analysis: data.analysisScore ?? 0,
+                    criticism: data.criticismScore ?? 0,
+                    empathy: data.empathyScore ?? 0,
+                    creativity: data.creativityScore ?? 0,
+                },
+            });
+        } catch (e) {
+            console.error("최신 자가진단 불러오기 실패:", e);
+
+            setDiagnosisCard({
+                topType: "분석 중",
+                middleType: "분석 중",
+                growthType: "분석 중",
+                summaryComment: "대화가 종료되고 자가진단이 생성되었습니다.",
+                conversationSummary: [],
+                hashtags: [],
+                scores: emptyScores,
+            });
+        } finally {
+            setSummaryVisible(true);
+        }
+    }, []);
+
+    const finishConversation = useCallback(async () => {
+        if (isFinishing || isReadOnly) return;
+        if (!roomId || Number.isNaN(roomId)) return;
+
+        try {
+            setIsFinishing(true);
+            await completeDiagnosis(roomId);
+            await openSummaryAfterComplete();
+        } catch (e) {
+            console.error("완료 처리 실패:", e);
+            Alert.alert("오류", e instanceof Error ? e.message : "완료 처리에 실패했습니다.");
+        } finally {
+            setIsFinishing(false);
+        }
+    }, [isFinishing, isReadOnly, roomId, openSummaryAfterComplete]);
 
     const onSend = useCallback(
         async (text: string) => {
             if (!text.trim() || isSending || isFinishing || isReadOnly) return;
+            if (!roomId || Number.isNaN(roomId)) return;
 
-            setIsSending(true);
-
-            const userMessage: AiMessage = {
-                id: Date.now(),
+            const optimisticMessage: AiMessage = {
+                id: -Date.now(),
                 roomId,
                 sender: "ME",
-                text,
+                text: text.trim(),
                 createdAt: new Date().toISOString(),
             };
 
-            const nextMessages = [...messages, userMessage];
-            setMessages(nextMessages);
+            try {
+                setIsSending(true);
 
-            setTimeout(() => {
-                const userTurnCount = nextMessages.filter((m) => m.sender === "ME").length;
+                setMessages((prev) => [...prev, optimisticMessage]);
 
-                const aiMessage: AiMessage = {
-                    id: Date.now() + 1,
-                    roomId,
-                    sender: "AI",
-                    text: buildAiReply(String(topicId), text, userTurnCount),
-                    createdAt: new Date().toISOString(),
-                };
+                setTimeout(() => {
+                    flatListRef.current?.scrollToEnd({ animated: true });
+                }, 50);
 
-                setMessages((prev) => [...prev, aiMessage]);
-                setIsSending(false);
+                await sendAiMessage(roomId, text.trim());
+
+                const refreshed = await getAiMessages(roomId);
+                const nextMessages = refreshed.data ?? [];
+                setMessages(nextMessages);
 
                 setTimeout(() => {
                     flatListRef.current?.scrollToEnd({ animated: true });
                 }, 80);
-            }, 900);
+
+                const lastAi = [...nextMessages].reverse().find((m) => m.sender === "AI");
+                if (
+                    lastAi &&
+                    isLikelyClosingMessage(lastAi.text) &&
+                    !hasOpenedSummaryRef.current
+                ) {
+                    hasOpenedSummaryRef.current = true;
+                    await finishConversation();
+                }
+            } catch (e) {
+                console.error("메시지 전송 실패:", e);
+
+                setMessages((prev) => prev.filter((m) => m.id !== optimisticMessage.id));
+
+                Alert.alert("오류", e instanceof Error ? e.message : "메시지 전송 실패");
+            } finally {
+                setIsSending(false);
+            }
         },
-        [isSending, isFinishing, messages, roomId, topicId, isReadOnly]
+        [roomId, isSending, isFinishing, isReadOnly, finishConversation]
     );
 
     const handleBack = useCallback(() => {
         router.back();
     }, [router]);
 
-    const handleFinish = useCallback(async () => {
+    const handleFinish = useCallback(() => {
         if (isFinishing || isReadOnly) return;
 
-        try {
-            setIsFinishing(true);
-            await AsyncStorage.setItem(COMPLETED_KEY, "true");
+        Alert.alert(
+            "대화를 완료하시겠습니까?",
+            "완료하면 대화가 저장되고 자가진단 카드가 생성됩니다.",
+            [
+                { text: "취소", style: "cancel" },
+                {
+                    text: "완료",
+                    onPress: () => {
+                        finishConversation();
+                    },
+                },
+            ]
+        );
+    }, [isFinishing, isReadOnly, finishConversation]);
 
-            const raw = await AsyncStorage.getItem(COMPLETED_META_KEY);
-            const parsed: CompletedChatMeta[] = raw ? JSON.parse(raw) : [];
-
-            const nextItem: CompletedChatMeta = {
-                roomId,
-                bookTitle: String(bookTitle ?? "AI 채팅"),
-                topicLabel: String(topicLabel ?? "분석"),
-                topicDescription: String(topicDescription ?? ""),
-                completedAt: new Date().toISOString(),
-            };
-
-            const deduped = parsed.filter((item) => item.roomId !== roomId);
-            deduped.unshift(nextItem);
-
-            await AsyncStorage.setItem(COMPLETED_META_KEY, JSON.stringify(deduped));
-
-            router.replace("/(profile)/library");
-        } catch (e) {
-            console.error("완료 처리 실패:", e);
-            Alert.alert("오류", "완료 처리에 실패했습니다.");
-        } finally {
-            setIsFinishing(false);
-        }
-    }, [COMPLETED_KEY, isFinishing, isReadOnly, roomId, bookTitle, topicLabel, topicDescription, router]);
+    const handleSummaryConfirm = useCallback(() => {
+        setSummaryVisible(false);
+        router.replace("/(profile)/reading-preference");
+    }, [router]);
 
     return (
         <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
@@ -368,7 +477,7 @@ export default function AiRoomScreen() {
                     >
                         <ActivityIndicator size="small" color={COLORS.primary} />
                         <Text style={{ color: COLORS.muted, fontSize: 12 }}>
-                            {isSending ? "AI가 응답 중..." : "완료 처리 중..."}
+                            {isSending ? "AI가 응답 중..." : "대화 정리 중..."}
                         </Text>
                     </View>
                 )}
@@ -377,6 +486,178 @@ export default function AiRoomScreen() {
                     <ChatInput onSend={onSend} disabled={isSending || isFinishing} />
                 )}
             </KeyboardAvoidingView>
+
+            <Modal
+                visible={summaryVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setSummaryVisible(false)}
+            >
+                <View style={modalStyles.backdrop}>
+                    <View style={modalStyles.card}>
+                        <Text style={modalStyles.title}>대화가 완료되었어요</Text>
+
+                        <View style={modalStyles.badgeRow}>
+                            <View style={modalStyles.mainBadge}>
+                                <Text style={modalStyles.mainBadgeText}>
+                                    {diagnosisCard?.topType ?? "분석 중"}
+                                </Text>
+                            </View>
+                            <View style={modalStyles.subBadge}>
+                                <Text style={modalStyles.subBadgeText}>
+                                    {diagnosisCard?.growthType ?? "분석 중"}
+                                </Text>
+                            </View>
+                        </View>
+
+                        <Text style={modalStyles.summaryText}>
+                            {diagnosisCard?.summaryComment ?? "대화 요약을 준비 중입니다."}
+                        </Text>
+
+                        {!!diagnosisCard?.hashtags?.length && (
+                            <View style={modalStyles.hashtagRow}>
+                                {diagnosisCard.hashtags.map((tag) => (
+                                    <View key={tag} style={modalStyles.hashtagChip}>
+                                        <Text style={modalStyles.hashtagText}>#{tag}</Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+
+                        <View style={modalStyles.summaryBox}>
+                            <Text style={modalStyles.summaryBoxTitle}>대화 요약</Text>
+                            <ScrollView style={{ maxHeight: 120 }} showsVerticalScrollIndicator={false}>
+                                {summaryLines.map((line, index) => (
+                                    <Text key={`${line}-${index}`} style={modalStyles.summaryLine}>
+                                        • {line}
+                                    </Text>
+                                ))}
+                            </ScrollView>
+                        </View>
+
+                        <Pressable
+                            onPress={handleSummaryConfirm}
+                            style={({ pressed }) => [modalStyles.confirmButton, pressed && { opacity: 0.9 }]}
+                        >
+                            <Text style={modalStyles.confirmButtonText}>확인</Text>
+                        </Pressable>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
+
+const modalStyles = StyleSheet.create({
+    backdrop: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.28)",
+        justifyContent: "center",
+        alignItems: "center",
+        paddingHorizontal: 20,
+    },
+    card: {
+        width: "100%",
+        borderRadius: 22,
+        backgroundColor: COLORS.white,
+        paddingHorizontal: 18,
+        paddingVertical: 20,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    title: {
+        fontSize: 18,
+        fontWeight: "900",
+        color: COLORS.primary,
+    },
+    badgeRow: {
+        flexDirection: "row",
+        gap: 8,
+        flexWrap: "wrap",
+        marginTop: 14,
+    },
+    mainBadge: {
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 999,
+        backgroundColor: "#B19277",
+    },
+    mainBadgeText: {
+        color: COLORS.white,
+        fontSize: 14,
+        fontWeight: "900",
+    },
+    subBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 999,
+        backgroundColor: COLORS.secondary,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    subBadgeText: {
+        color: COLORS.primary,
+        fontSize: 13,
+        fontWeight: "800",
+    },
+    summaryText: {
+        marginTop: 14,
+        color: COLORS.primary,
+        fontSize: 14,
+        lineHeight: 22,
+        fontWeight: "800",
+    },
+    hashtagRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 8,
+        marginTop: 12,
+    },
+    hashtagChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: "#FFFDFC",
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    hashtagText: {
+        color: COLORS.primary,
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    summaryBox: {
+        marginTop: 16,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        backgroundColor: "#FFFDFC",
+        padding: 12,
+    },
+    summaryBoxTitle: {
+        color: COLORS.muted,
+        fontSize: 12,
+        fontWeight: "900",
+        marginBottom: 8,
+    },
+    summaryLine: {
+        color: COLORS.primary,
+        fontSize: 13,
+        lineHeight: 20,
+        fontWeight: "700",
+        marginBottom: 4,
+    },
+    confirmButton: {
+        marginTop: 18,
+        height: 48,
+        borderRadius: 14,
+        backgroundColor: COLORS.primary,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    confirmButtonText: {
+        color: COLORS.bg,
+        fontSize: 15,
+        fontWeight: "900",
+    },
+});

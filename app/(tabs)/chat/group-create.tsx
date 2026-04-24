@@ -200,7 +200,7 @@ export default function GroupCreateScreen() {
             try {
                 setSearchLoading(true);
 
-                const res = await searchBooks(q, 1, 10);
+                const res = await searchBooks(q);
 
                 if (cancelled) return;
 

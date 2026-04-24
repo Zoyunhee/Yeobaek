@@ -195,18 +195,11 @@ export async function uploadProfileImage(userId: number, imageUri: string) {
     const isJson = contentType?.includes("application/json");
     const data = isJson ? await res.json() : await res.text();
 
-    console.log("[uploadProfileImage]", {
-        url,
-        status: res.status,
-        data,
-    });
-
     if (!res.ok) {
         const message =
             typeof data === "object" && data && "message" in data
                 ? String((data as { message?: string }).message)
                 : `요청 실패 (${res.status})`;
-
         throw new Error(message);
     }
 
@@ -268,6 +261,8 @@ export async function getReadCompletions(userId: number) {
         count: number;
         data: Array<{
             id: number;
+            roomId?: number;
+            reviewId?: number;
             bookIsbn: string;
             bookTitle: string;
             bookAuthor?: string;
@@ -430,21 +425,45 @@ export interface SearchKeywordItem {
     lastSearchedAt: string;
 }
 
-export async function searchBooks(query: string, page = 1, size = 10) {
+export async function searchBooks(query: string) {
     const params = new URLSearchParams({
         query,
-        page: String(page),
-        size: String(size),
     });
 
-    return apiFetch<{
-        query: string;
-        page: number;
-        size: number;
-        isEnd: boolean;
-        totalCount: number;
-        items: BookSearchItem[];
-    }>(`/api/books/search?${params.toString()}`);
+    const res = await apiFetch<{
+        success: boolean;
+        data: {
+            totalResults: number;
+            books: Array<{
+                title: string;
+                author: string;
+                publisher: string;
+                cover: string;
+                isbn13: string;
+                categoryName?: string;
+                description?: string;
+            }>;
+        };
+    }>(`/api/aladin/books/search?${params.toString()}`);
+
+    return {
+        query,
+        page: 1,
+        size: res.data?.books?.length ?? 0,
+        isEnd: true,
+        totalCount: res.data?.totalResults ?? 0,
+        items: (res.data?.books ?? []).map((book) => ({
+            title: book.title,
+            isbn: book.isbn13,
+            authors: book.author
+                ? book.author.split(",").map((v) => v.trim())
+                : [],
+            publisher: book.publisher,
+            thumbnail: book.cover,
+            contents: book.description ?? "",
+            genre: book.categoryName ?? "",
+        })),
+    };
 }
 
 export async function searchHomeBooks(query: string, page = 1, size = 10) {
@@ -502,26 +521,6 @@ export async function saveBook(params: {
 /* =========================
    분석/감정 관련
 ========================= */
-
-/*export async function saveEmotionLog(params: { 안 씀
-    roomId: number;
-    emotionId: number;
-    selectedAt?: string;
-}) {
-    return apiFetch<{
-        success: boolean;
-        data: {
-            id: number;
-            roomId: number;
-            userId: number;
-            emotionId: number;
-            selectedAt: string;
-        };
-    }>("/api/analytics/emotions", {
-        method: "POST",
-        body: JSON.stringify(params),
-    });
-}*/
 
 export async function getThinkingStyleStats(year?: number | null, month?: number | null) {
     const params = new URLSearchParams();
@@ -612,7 +611,7 @@ export interface AiRoomSummary {
     status: "IN_PROGRESS" | "FINISHED";
     lastMessageAt?: string;
     displayTime?: string;
-    bookId: number;
+    bookId?: number;
     title: string;
     coverUrl?: string;
     genre?: string;
@@ -626,29 +625,63 @@ export interface AiMessage {
     createdAt: string;
 }
 
-export interface AiMessageApi {
-    messageId: number;
-    role: "USER" | "AI";
-    content: string;
-    createdAt: string;
+type AiRoomCreateResponseDto = {
+    id?: number;
+    roomId?: number;
+};
+
+type AIChatMessageResponseDto = {
+    id?: number;
+    messageId?: number;
+    role?: "USER" | "AI" | "SYSTEM";
+    sender?: "USER" | "AI" | "SYSTEM";
+    content?: string;
+    message?: string;
+    createdAt?: string;
+};
+
+type AIChatExchangeResponseDto = {
+    userMessage?: AIChatMessageResponseDto;
+    aiMessage?: AIChatMessageResponseDto;
+    messages?: AIChatMessageResponseDto[];
+};
+
+function mapAiMessageFromApi(roomId: number, item: AIChatMessageResponseDto): AiMessage {
+    const role = item.role ?? item.sender ?? "AI";
+
+    return {
+        id: Number(item.id ?? item.messageId ?? Date.now()),
+        roomId,
+        sender: role === "USER" ? "ME" : "AI",
+        text: item.content ?? item.message ?? "",
+        createdAt: item.createdAt ?? new Date().toISOString(),
+    };
 }
 
 export async function createAiRoom(params: {
-    isbn: string;
-    title: string;
-    coverUrl?: string;
-    genre?: string;
-    authorText?: string;
-    publisher?: string;
-    emotionId: number;
+    userId: number;
+    reviewId: number;
+    topicId: number;
 }) {
-    return apiFetch<{
-        success: boolean;
-        roomId: number;
+    const res = await apiFetch<{
+        success?: boolean;
+        message?: string;
+        data?: AiRoomCreateResponseDto;
     }>("/api/aichat/rooms", {
         method: "POST",
-        body: JSON.stringify(params),
+        body: JSON.stringify({
+            userId: params.userId,
+            reviewId: params.reviewId,
+            topicId: params.topicId,
+        }),
     });
+
+    return {
+        success: res.success ?? true,
+        message: res.message,
+        roomId: Number(res.data?.roomId ?? res.data?.id ?? 0),
+        data: res.data,
+    };
 }
 
 export async function getAiRooms(status?: "IN_PROGRESS" | "FINISHED") {
@@ -660,70 +693,202 @@ export async function getAiRooms(status?: "IN_PROGRESS" | "FINISHED") {
     }>(`/api/aichat/rooms${query}`);
 }
 
-export async function discardAiRoom(roomId: number) {
-    return apiFetch<void>(`/api/aichat/rooms/${roomId}/discard`, {
-        method: "DELETE",
-    });
-}
-
 export async function sendAiMessage(roomId: number, content: string) {
-    return apiFetch<{
-        success: boolean;
-        data: AiMessageApi;
+    const res = await apiFetch<{
+        success?: boolean;
+        message?: string;
+        data?: AIChatExchangeResponseDto;
     }>(`/api/aichat/rooms/${roomId}/messages`, {
         method: "POST",
         body: JSON.stringify({ content }),
     });
+
+    return {
+        success: res.success ?? true,
+        message: res.message,
+        data: res.data,
+    };
 }
 
 export async function getAiMessages(roomId: number) {
-    return apiFetch<{
-        success: boolean;
-        data: AiMessageApi[];
+    const res = await apiFetch<{
+        success?: boolean;
+        data?: AIChatMessageResponseDto[];
     }>(`/api/aichat/rooms/${roomId}/messages`);
+
+    const items = (res.data ?? []).map((item) => mapAiMessageFromApi(roomId, item));
+
+    return {
+        success: res.success ?? true,
+        data: items,
+    };
 }
 
-export async function startAiSession(roomId: number) {
-    return apiFetch<{ success: boolean; sessionId: number }>(
-        `/api/aichat/rooms/${roomId}/session/start`,
-        { method: "POST" }
-    );
-}
-
-export async function saveAiSession(roomId: number) {
+export async function completeDiagnosis(roomId: number) {
     return apiFetch<{
-        success: boolean;
-        data: {
-            id?: number;
-            roomId: number;
-            critic: number;
-            emotion: number;
-            analysis: number;
-            empathy: number;
-            creative: number;
-            createdAt: string;
-        };
-    }>(`/api/aichat/rooms/${roomId}/end-session`, {
+        success?: boolean;
+        message?: string;
+        data?: unknown;
+    }>(`/api/diagnosis/rooms/${roomId}/complete`, {
         method: "POST",
     });
 }
 
-export async function finishAiSession(roomId: number) {
-    return apiFetch<{
+/* =========================
+   발제문 / 토픽
+========================= */
+
+export type ThinkingType =
+    | "EMOTION"
+    | "ANALYSIS"
+    | "CRITICISM"
+    | "EMPATHY"
+    | "CREATIVITY";
+
+export type TopicRole = "TOP" | "MIDDLE" | "GROWTH";
+
+export type ThinkingAnalysisResult = {
+    reviewId: number;
+    userId: number;
+    emotionScore: number;
+    analysisScore: number;
+    criticismScore: number;
+    empathyScore: number;
+    creativityScore: number;
+    topType: ThinkingType;
+    middleType: ThinkingType;
+    growthType: ThinkingType;
+};
+
+type TopicResponseDto = {
+    id: number;
+    reviewId: number;
+    userId: number;
+    topicRole: TopicRole;
+    thinkingType: ThinkingType;
+    question: string;
+};
+
+export type TopicItem = {
+    id: number;
+    reviewId: number;
+    userId: number;
+    topicRole: TopicRole;
+    thinkingType: ThinkingType;
+    title: string;
+    description: string;
+    firstQuestion: string;
+};
+
+function mapThinkingTypeToLabel(type?: ThinkingType) {
+    switch (type) {
+        case "EMOTION":
+            return "감정";
+        case "ANALYSIS":
+            return "분석";
+        case "CRITICISM":
+            return "비평";
+        case "EMPATHY":
+            return "공감";
+        case "CREATIVITY":
+            return "창의";
+        default:
+            return "추천";
+    }
+}
+
+function mapTopicRoleToLabel(role?: TopicRole) {
+    switch (role) {
+        case "TOP":
+            return "강점";
+        case "MIDDLE":
+            return "확장";
+        case "GROWTH":
+            return "성장";
+        default:
+            return "주제";
+    }
+}
+
+function mapTopic(dto: TopicResponseDto): TopicItem {
+    const typeLabel = mapThinkingTypeToLabel(dto.thinkingType);
+    const roleLabel = mapTopicRoleToLabel(dto.topicRole);
+
+    return {
+        id: dto.id,
+        reviewId: dto.reviewId,
+        userId: dto.userId,
+        topicRole: dto.topicRole,
+        thinkingType: dto.thinkingType,
+        title: `${roleLabel} · ${typeLabel}`,
+        description: dto.question,
+        firstQuestion: dto.question,
+    };
+}
+
+export async function analyzeReview(reviewId: number) {
+    const res = await apiFetch<{
         success: boolean;
-        data: {
-            id?: number;
-            roomId: number;
-            critic: number;
-            emotion: number;
-            analysis: number;
-            empathy: number;
-            creative: number;
-            createdAt: string;
-        };
-    }>(`/api/aichat/rooms/${roomId}/finish-session`, {
+        message?: string;
+        data: ThinkingAnalysisResult;
+    }>(`/api/thinking-analysis/${reviewId}`, {
         method: "POST",
     });
+
+    return res;
+}
+
+export async function getThinkingAnalysis(reviewId: number) {
+    const res = await apiFetch<{
+        success: boolean;
+        data: ThinkingAnalysisResult;
+    }>(`/api/thinking-analysis/${reviewId}`);
+
+    return res;
+}
+
+export async function generateTopics(reviewId: number) {
+    const res = await apiFetch<{
+        success: boolean;
+        message?: string;
+        data: TopicResponseDto[];
+    }>(`/api/topics/${reviewId}`, {
+        method: "POST",
+    });
+
+    return {
+        success: res.success,
+        message: res.message,
+        data: (res.data ?? []).map(mapTopic),
+    };
+}
+
+export async function getTopics(reviewId: number) {
+    const res = await apiFetch<{
+        success: boolean;
+        data: TopicResponseDto[];
+    }>(`/api/topics/${reviewId}`);
+
+    return {
+        success: res.success,
+        data: (res.data ?? []).map(mapTopic),
+    };
+}
+
+export async function prepareTopics(reviewId: number) {
+    const res = await apiFetch<{
+        success: boolean;
+        message?: string;
+        data: TopicResponseDto[];
+    }>(`/api/aichat/reviews/${reviewId}/prepare`, {
+        method: "POST",
+    });
+
+    return {
+        success: res.success,
+        message: res.message,
+        data: (res.data ?? []).map(mapTopic),
+    };
 }
 
 /* =========================
@@ -857,7 +1022,6 @@ export interface ToggleDiscussionReadyResponse {
     starting?: boolean;
 }
 
-/* 방 목록 */
 export async function getDiscussionRooms() {
     return apiFetch<{
         success: boolean;
@@ -865,7 +1029,6 @@ export async function getDiscussionRooms() {
     }>("/api/book-discussions");
 }
 
-/* 참여 가능한 방 목록 */
 export async function getAvailableDiscussionRooms() {
     return apiFetch<{
         success: boolean;
@@ -873,7 +1036,6 @@ export async function getAvailableDiscussionRooms() {
     }>("/api/book-discussions/available");
 }
 
-/* 대기중 방 목록 */
 export async function getWaitingDiscussionRooms() {
     return apiFetch<{
         success: boolean;
@@ -881,7 +1043,6 @@ export async function getWaitingDiscussionRooms() {
     }>("/api/book-discussions/waiting");
 }
 
-/* 진행중 방 목록 */
 export async function getInProgressDiscussionRooms() {
     return apiFetch<{
         success: boolean;
@@ -889,7 +1050,6 @@ export async function getInProgressDiscussionRooms() {
     }>("/api/book-discussions/in-progress");
 }
 
-/* 방 상세 */
 export async function getDiscussionRoom(roomId: number) {
     return apiFetch<{
         success: boolean;
@@ -897,7 +1057,6 @@ export async function getDiscussionRoom(roomId: number) {
     }>(`/api/book-discussions/${roomId}`);
 }
 
-/* 방 생성 */
 export async function createDiscussionRoom(params: {
     bookTitle: string;
     bookAuthor: string;
@@ -921,7 +1080,6 @@ export async function createDiscussionRoom(params: {
     });
 }
 
-/* 방 입장 */
 export async function joinDiscussionRoom(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
@@ -932,7 +1090,6 @@ export async function joinDiscussionRoom(roomId: number, userId: number) {
     });
 }
 
-/* 방 퇴장 */
 export async function leaveDiscussionRoom(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
@@ -942,7 +1099,6 @@ export async function leaveDiscussionRoom(roomId: number, userId: number) {
     });
 }
 
-/* READY 상태 토글 */
 export async function toggleDiscussionReady(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
@@ -953,7 +1109,6 @@ export async function toggleDiscussionReady(roomId: number, userId: number) {
     });
 }
 
-/* 방장 강제 시작 */
 export async function forceStartDiscussion(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
@@ -964,7 +1119,6 @@ export async function forceStartDiscussion(roomId: number, userId: number) {
     });
 }
 
-/* 방 종료 */
 export async function finishDiscussionRoom(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
@@ -974,7 +1128,6 @@ export async function finishDiscussionRoom(roomId: number, userId: number) {
     });
 }
 
-/* 방 삭제 */
 export async function deleteDiscussionRoom(roomId: number, userId: number) {
     return apiFetch<{
         success: boolean;
@@ -984,7 +1137,6 @@ export async function deleteDiscussionRoom(roomId: number, userId: number) {
     });
 }
 
-/* 참여자 목록 */
 export async function getDiscussionParticipants(roomId: number) {
     return apiFetch<{
         success: boolean;
@@ -992,7 +1144,6 @@ export async function getDiscussionParticipants(roomId: number) {
     }>(`/api/book-discussions/${roomId}/participants`);
 }
 
-/* 메시지 목록 */
 export async function getDiscussionMessages(roomId: number) {
     return apiFetch<{
         success: boolean;
@@ -1000,50 +1151,94 @@ export async function getDiscussionMessages(roomId: number) {
     }>(`/api/book-discussions/${roomId}/messages`);
 }
 
+/* =========================
+   자가진단
+========================= */
 
-/* 자가진단 */
 export async function getAvailableGenres() {
     return apiFetch<{
         success: boolean;
         data: string[];
     }>("/api/books/genres");
 }
-/* 독후감 */
+
+/* =========================
+   독후감
+========================= */
+
+type BookReviewDto = {
+    id: number;
+    userId: number;
+    bookIsbn: string;
+    bookTitle: string;
+    bookAuthor?: string;
+    bookCover?: string;
+    bookPublisher?: string;
+    bookCategory?: string;
+    bookDescription?: string;
+    content?: string;
+    rating?: number | null;
+    createdAt?: string;
+    updatedAt?: string;
+};
+
+export type BookReviewItem = {
+    id: number;
+    userId: number;
+    bookIsbn: string;
+    bookTitle: string;
+    author?: string;
+    coverImage?: string;
+    publisher?: string;
+    bookCategory?: string;
+    bookDescription?: string;
+    content?: string;
+    rating?: number | null;
+    createdAt?: string;
+    updatedAt?: string;
+};
+
+function mapBookReview(dto: BookReviewDto): BookReviewItem {
+    return {
+        id: dto.id,
+        userId: dto.userId,
+        bookIsbn: dto.bookIsbn,
+        bookTitle: dto.bookTitle,
+        author: dto.bookAuthor,
+        coverImage: dto.bookCover,
+        publisher: dto.bookPublisher,
+        bookCategory: dto.bookCategory,
+        bookDescription: dto.bookDescription,
+        content: dto.content,
+        rating: dto.rating ?? null,
+        createdAt: dto.createdAt,
+        updatedAt: dto.updatedAt,
+    };
+}
+
 export async function getBookReviews(userId: number) {
-    return apiFetch<{
+    const res = await apiFetch<{
         success: boolean;
-        count: number;
-        data: Array<{
-            id: number;
-            userId: number;
-            bookIsbn: string;
-            bookTitle: string;
-            author?: string;
-            coverImage?: string;
-            publisher?: string;
-            content?: string;
-            createdAt?: string;
-            updatedAt?: string;
-        }>;
-    }>(`/api/mypage/book-reviews/${userId}`);
+        data: BookReviewDto[];
+    }>(`/api/book-reviews?userId=${userId}`);
+
+    return {
+        success: res.success,
+        count: res.data?.length ?? 0,
+        data: (res.data ?? []).map(mapBookReview),
+    };
 }
 
 export async function getBookReviewDetail(reviewId: number) {
-    return apiFetch<{
+    const res = await apiFetch<{
         success: boolean;
-        data: {
-            id: number;
-            userId: number;
-            bookIsbn: string;
-            bookTitle: string;
-            author?: string;
-            coverImage?: string;
-            publisher?: string;
-            content?: string;
-            createdAt?: string;
-            updatedAt?: string;
-        };
-    }>(`/api/mypage/book-reviews/detail/${reviewId}`);
+        data: BookReviewDto;
+    }>(`/api/book-reviews/${reviewId}`);
+
+    return {
+        success: res.success,
+        data: mapBookReview(res.data),
+    };
 }
 
 export async function createBookReview(params: {
@@ -1053,54 +1248,325 @@ export async function createBookReview(params: {
     author?: string;
     coverImage?: string;
     publisher?: string;
+    category?: string;
+    description?: string;
     content: string;
+    rating?: number | null;
 }) {
-    return apiFetch<{
+    const res = await apiFetch<{
         success: boolean;
         message: string;
-        data: {
-            id: number;
-            userId: number;
-            bookIsbn: string;
-            bookTitle: string;
-            author?: string;
-            coverImage?: string;
-            publisher?: string;
-            content: string;
-            createdAt: string;
-            updatedAt?: string;
-        };
-    }>("/api/mypage/book-reviews", {
+        data: BookReviewDto;
+    }>("/api/book-reviews", {
         method: "POST",
-        body: JSON.stringify(params),
+        body: JSON.stringify({
+            userId: params.userId,
+            bookIsbn: params.bookIsbn,
+            bookTitle: params.bookTitle,
+            bookAuthor: params.author,
+            bookCover: params.coverImage,
+            bookPublisher: params.publisher,
+            bookCategory: params.category,
+            bookDescription: params.description,
+            content: params.content,
+            rating: params.rating ?? null,
+        }),
     });
+
+    return {
+        success: res.success,
+        message: res.message,
+        data: mapBookReview(res.data),
+    };
 }
 
 export async function updateBookReview(
     reviewId: number,
     userId: number,
-    content: string
+    content: string,
+    rating?: number
 ) {
-    return apiFetch<{
+    const res = await apiFetch<{
         success: boolean;
         message: string;
-        data: {
-            id: number;
-            userId: number;
-            content: string;
-            updatedAt?: string;
-        };
-    }>(`/api/mypage/book-reviews/${reviewId}?userId=${userId}`, {
+        data: BookReviewDto;
+    }>(`/api/book-reviews/${reviewId}?userId=${userId}`, {
         method: "PUT",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, rating: rating ?? null }),
     });
+
+    return {
+        success: res.success,
+        message: res.message,
+        data: mapBookReview(res.data),
+    };
 }
 
 export async function deleteBookReview(reviewId: number, userId: number) {
     return apiFetch<{
         success: boolean;
         message: string;
-    }>(`/api/mypage/book-reviews/${reviewId}?userId=${userId}`, {
+    }>(`/api/book-reviews/${reviewId}?userId=${userId}`, {
         method: "DELETE",
     });
+}
+
+/* =========================
+   자가진단 / 독서 성향 분석
+========================= */
+
+export type StyleKey = "emotion" | "analysis" | "critic" | "empathy" | "creative";
+
+export type DiagnosisRadarProfile = Record<StyleKey, number>;
+
+export type DiagnosisTimelineItem = {
+    id: string;
+    title: string;
+    cover: string;
+    scores: Record<StyleKey, number>;
+    changes: Record<StyleKey, number | null>;
+    insights: Record<StyleKey, string>;
+};
+
+export type DiagnosisGuideBook = {
+    title: string;
+    description: string;
+    cover: string;
+    reason?: string;
+};
+
+export type DiagnosisGuide = {
+    taste: DiagnosisGuideBook | null;
+    growth: DiagnosisGuideBook | null;
+};
+
+type DiagnosisRadarResponseDto = {
+    labels: string[];
+    scores: number[];
+    topType: string;
+    middleType: string;
+    growthType: string;
+    summaryComment: string;
+};
+
+type DiagnosisTrendSummaryDto = {
+    emotion: string;
+    analysis: string;
+    criticism: string;
+    empathy: string;
+    creativity: string;
+};
+
+export type DiagnosisTrendResult = {
+    success: boolean;
+    data: DiagnosisTimelineItem[];
+    summary: DiagnosisTrendSummaryDto | null;
+};
+
+type DiagnosisTrendItemResponseDto = {
+    reviewId: number;
+    bookTitle: string;
+
+    emotionScore: number;
+    analysisScore: number;
+    criticismScore: number;
+    empathyScore: number;
+    creativityScore: number;
+
+    emotionChange: number | null;
+    analysisChange: number | null;
+    criticismChange: number | null;
+    empathyChange: number | null;
+    creativityChange: number | null;
+
+    emotionInsight: string;
+    analysisInsight: string;
+    criticismInsight: string;
+    empathyInsight: string;
+    creativityInsight: string;
+};
+
+type DiagnosisTrendResponseDto = {
+    items: DiagnosisTrendItemResponseDto[];
+    summary: DiagnosisTrendSummaryDto;
+};
+
+type RecommendedBookItemResponseDto = {
+    title: string;
+    author: string;
+    publisher: string;
+    cover: string;
+    description: string;
+    reason: string;
+};
+
+type RecommendationResponseDto = {
+    preferenceBook: RecommendedBookItemResponseDto;
+    growthBook: RecommendedBookItemResponseDto;
+};
+
+function safeNum(value: unknown) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+}
+
+export async function getDiagnosisLatest(userId: number) {
+    return apiFetch<{
+        success: boolean;
+        data: {
+            reviewId: number;
+            roomId: number;
+
+            emotionScore: number;
+            analysisScore: number;
+            criticismScore: number;
+            empathyScore: number;
+            creativityScore: number;
+
+            topType: string;
+            middleType: string;
+            growthType: string;
+
+            summaryComment: string;
+            conversationSummary: string[];
+            hashtags: string[];
+        };
+    }>(`/api/diagnosis/users/${userId}/latest`);
+}
+
+export async function getDiagnosisRadar(userId: number) {
+    const res = await apiFetch<{
+        success: boolean;
+        data: {
+            labels: string[];
+            scores: number[];
+            topType: string;
+            middleType: string;
+            growthType: string;
+            summaryComment: string;
+        };
+    }>(`/api/diagnosis/users/${userId}/radar`);
+
+    const labels = res.data?.labels ?? [];
+    const scores = res.data?.scores ?? [];
+
+    const scoreMap = new Map<string, number>();
+    labels.forEach((label, index) => {
+        scoreMap.set(String(label).toUpperCase(), Number(scores[index] ?? 0));
+    });
+
+    const pick = (keys: string[]) => {
+        for (const key of keys) {
+            const value = scoreMap.get(key);
+            if (typeof value === "number" && Number.isFinite(value)) {
+                return value <= 1 ? value * 100 : value;
+            }
+        }
+        return 0;
+    };
+
+    return {
+        success: res.success,
+        data: {
+            profile: {
+                emotion: pick(["EMOTION", "감정"]),
+                analysis: pick(["ANALYSIS", "분석"]),
+                critic: pick(["CRITICISM", "CRITIC", "비평"]),
+                empathy: pick(["EMPATHY", "공감"]),
+                creative: pick(["CREATIVITY", "CREATIVE", "창의"]),
+            } as DiagnosisRadarProfile,
+            summary: res.data?.summaryComment ?? "자가진단 요약이 없습니다.",
+            topType: res.data?.topType ?? "",
+            middleType: res.data?.middleType ?? "",
+            growthType: res.data?.growthType ?? "",
+        },
+    };
+}
+
+export async function getDiagnosisTrend(userId: number): Promise<DiagnosisTrendResult> {
+    const res = await apiFetch<{
+        success: boolean;
+        data: DiagnosisTrendResponseDto;
+    }>(`/api/diagnosis/users/${userId}/trend`);
+
+    const items = res.data?.items ?? [];
+    const summary = res.data?.summary ?? null;
+
+    const mappedItems: DiagnosisTimelineItem[] = items.map((item, index) => ({
+        id: String(item.reviewId ?? index),
+        title: item.bookTitle ?? "알 수 없는 책",
+        cover: "",
+        scores: {
+            emotion: safeNum(item.emotionScore),
+            analysis: safeNum(item.analysisScore),
+            critic: safeNum(item.criticismScore),
+            empathy: safeNum(item.empathyScore),
+            creative: safeNum(item.creativityScore),
+        },
+        changes: {
+            emotion: item.emotionChange ?? null,
+            analysis: item.analysisChange ?? null,
+            critic: item.criticismChange ?? null,
+            empathy: item.empathyChange ?? null,
+            creative: item.creativityChange ?? null,
+        },
+        insights: {
+            emotion: item.emotionInsight ?? "이 책의 감정 흐름을 확인할 수 있어요.",
+            analysis: item.analysisInsight ?? "이 책의 분석 흐름을 확인할 수 있어요.",
+            critic: item.criticismInsight ?? "이 책의 비평 흐름을 확인할 수 있어요.",
+            empathy: item.empathyInsight ?? "이 책의 공감 흐름을 확인할 수 있어요.",
+            creative: item.creativityInsight ?? "이 책의 창의 흐름을 확인할 수 있어요.",
+        },
+    }));
+
+    return {
+        success: res.success,
+        data: mappedItems,
+        summary,
+    };
+}
+
+export async function getDiagnosisHistory(userId: number) {
+    return apiFetch<{
+        success: boolean;
+        data: Array<{
+            reviewId: number;
+            bookTitle: string;
+            emotionScore: number;
+            analysisScore: number;
+            criticismScore: number;
+            empathyScore: number;
+            creativityScore: number;
+            createdAt: string;
+        }>;
+    }>(`/api/diagnosis/users/${userId}/history`);
+}
+
+export async function getDiagnosisRecommendations(userId: number) {
+    const res = await apiFetch<{
+        success: boolean;
+        data: RecommendationResponseDto;
+    }>(`/api/recommend/users/${userId}`);
+
+    return {
+        success: res.success,
+        data: {
+            taste: res.data?.preferenceBook
+                ? {
+                    title: res.data.preferenceBook.title,
+                    description: res.data.preferenceBook.reason || res.data.preferenceBook.description,
+                    cover: res.data.preferenceBook.cover,
+                    reason: res.data.preferenceBook.reason,
+                }
+                : null,
+            growth: res.data?.growthBook
+                ? {
+                    title: res.data.growthBook.title,
+                    description: res.data.growthBook.reason || res.data.growthBook.description,
+                    cover: res.data.growthBook.cover,
+                    reason: res.data.growthBook.reason,
+                }
+                : null,
+        } as DiagnosisGuide,
+    };
 }
