@@ -644,6 +644,7 @@ type AIChatExchangeResponseDto = {
     userMessage?: AIChatMessageResponseDto;
     aiMessage?: AIChatMessageResponseDto;
     messages?: AIChatMessageResponseDto[];
+    finished?: boolean;
 };
 
 function mapAiMessageFromApi(roomId: number, item: AIChatMessageResponseDto): AiMessage {
@@ -703,10 +704,29 @@ export async function sendAiMessage(roomId: number, content: string) {
         body: JSON.stringify({ content }),
     });
 
+    const exchange = res.data;
+
+    const userMessage = exchange?.userMessage
+        ? mapAiMessageFromApi(roomId, exchange.userMessage)
+        : null;
+
+    const aiMessage = exchange?.aiMessage
+        ? mapAiMessageFromApi(roomId, exchange.aiMessage)
+        : null;
+
+    const messages = exchange?.messages
+        ? exchange.messages.map((item) => mapAiMessageFromApi(roomId, item))
+        : [userMessage, aiMessage].filter(Boolean) as AiMessage[];
+
     return {
         success: res.success ?? true,
         message: res.message,
-        data: res.data,
+        data: {
+            userMessage,
+            aiMessage,
+            messages,
+            finished: exchange?.finished ?? false,
+        },
     };
 }
 
@@ -1329,7 +1349,10 @@ export type DiagnosisTimelineItem = {
 };
 
 export type DiagnosisGuideBook = {
+    isbn: string;
     title: string;
+    author: string;
+    publisher: string;
     description: string;
     cover: string;
     reason?: string;
@@ -1392,6 +1415,7 @@ type DiagnosisTrendResponseDto = {
 };
 
 type RecommendedBookItemResponseDto = {
+    isbn: string;
     title: string;
     author: string;
     publisher: string;
@@ -1553,7 +1577,10 @@ export async function getDiagnosisRecommendations(userId: number) {
         data: {
             taste: res.data?.preferenceBook
                 ? {
+                    isbn: res.data.preferenceBook.isbn,
                     title: res.data.preferenceBook.title,
+                    author: res.data.preferenceBook.author,
+                    publisher: res.data.preferenceBook.publisher,
                     description: res.data.preferenceBook.reason || res.data.preferenceBook.description,
                     cover: res.data.preferenceBook.cover,
                     reason: res.data.preferenceBook.reason,
@@ -1561,7 +1588,10 @@ export async function getDiagnosisRecommendations(userId: number) {
                 : null,
             growth: res.data?.growthBook
                 ? {
+                    isbn: res.data.growthBook.isbn,
                     title: res.data.growthBook.title,
+                    author: res.data.growthBook.author,
+                    publisher: res.data.growthBook.publisher,
                     description: res.data.growthBook.reason || res.data.growthBook.description,
                     cover: res.data.growthBook.cover,
                     reason: res.data.growthBook.reason,

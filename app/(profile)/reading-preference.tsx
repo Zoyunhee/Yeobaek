@@ -28,9 +28,13 @@ import {
     getDiagnosisRadar,
     getDiagnosisTrend,
     getDiagnosisRecommendations,
+    addWishlist,
+    removeWishlistByIsbn,
+    checkWishlist,
     type StyleKey,
     type DiagnosisTimelineItem,
     type DiagnosisGuide,
+    type DiagnosisGuideBook,
 } from "@/services/api";
 
 const STYLE_META: { key: StyleKey; label: string }[] = [
@@ -41,12 +45,6 @@ const STYLE_META: { key: StyleKey; label: string }[] = [
     { key: "creative", label: "창의" },
 ];
 
-function normalizeRadarValue(value: number) {
-    if (!Number.isFinite(value)) return 0;
-    if (value <= 1) return value * 100;
-    return value;
-}
-
 function radarPoint(
     cx: number,
     cy: number,
@@ -56,17 +54,14 @@ function radarPoint(
 ) {
     const angle = ((angleDeg - 90) * Math.PI) / 180;
     const r = (radius * value) / 100;
+
     return {
         x: cx + Math.cos(angle) * r,
         y: cy + Math.sin(angle) * r,
     };
 }
 
-function RadarChart({
-                        data,
-                    }: {
-    data: Record<StyleKey, number>;
-}) {
+function RadarChart({ data }: { data: Record<StyleKey, number> }) {
     const { width } = useWindowDimensions();
 
     const svgWidth = Math.min(width - 56, 300);
@@ -83,6 +78,13 @@ function RadarChart({
         radarPoint(cx, cy, radius, angles[index], data[item.key] ?? 0)
     );
 
+    const [pressedPoint, setPressedPoint] = useState<{
+        label: string;
+        value: number;
+        x: number;
+        y: number;
+    } | null>(null);
+
     const pointString = points.map((p) => `${p.x},${p.y}`).join(" ");
 
     return (
@@ -92,6 +94,7 @@ function RadarChart({
                     const levelPoints = STYLE_META.map((_, index) =>
                         radarPoint(cx, cy, radius, angles[index], level)
                     );
+
                     return (
                         <Polygon
                             key={level}
@@ -157,10 +160,56 @@ function RadarChart({
                     strokeWidth={2}
                 />
 
-                {points.map((p, index) => (
-                    <Circle key={index} cx={p.x} cy={p.y} r={5} fill="#B67946" />
-                ))}
+                {points.map((p, index) => {
+                    const item = STYLE_META[index];
+                    const value = Math.round(data[item.key] ?? 0);
+
+                    return (
+                        <G key={item.key}>
+                            <Circle cx={p.x} cy={p.y} r={5} fill="#B67946" />
+
+                            <Circle
+                                cx={p.x}
+                                cy={p.y}
+                                r={18}
+                                fill="transparent"
+                                onPressIn={() =>
+                                    setPressedPoint({
+                                        label: item.label,
+                                        value,
+                                        x: p.x,
+                                        y: p.y,
+                                    })
+                                }
+                                onPressOut={() => setPressedPoint(null)}
+                            />
+                        </G>
+                    );
+                })}
             </Svg>
+            {pressedPoint && (
+                <View
+                    style={{
+                        position: "absolute",
+                        left: pressedPoint.x - 40,
+                        top: pressedPoint.y - 50,
+                        backgroundColor: "#FFF",
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: "#E0DAD3",
+                        shadowColor: "#000",
+                        shadowOpacity: 0.1,
+                        shadowRadius: 4,
+                        elevation: 3,
+                    }}
+                >
+                    <Text style={{ fontWeight: "800", color: COLORS.primary }}>
+                        {pressedPoint.label} {pressedPoint.value}점
+                    </Text>
+                </View>
+            )}
         </View>
     );
 }
@@ -174,6 +223,7 @@ function splitLabelLines(text: string, maxChars = 9) {
 
     for (const word of words) {
         const next = current ? `${current} ${word}` : word;
+
         if (next.length <= maxChars) {
             current = next;
         } else {
@@ -200,9 +250,7 @@ function TimelineChart({
     const { width } = useWindowDimensions();
 
     const chartWidth =
-        books.length <= 3
-            ? width - 64
-            : Math.max(width - 64, books.length * 130);
+        books.length <= 3 ? width - 64 : Math.max(width - 64, books.length * 130);
 
     const chartHeight = 220;
 
@@ -227,6 +275,7 @@ function TimelineChart({
                 : paddingLeft + (plotW * index) / (books.length - 1);
 
         const y = getY(book.scores[selectedStyle] ?? 0);
+
         return { x, y, book };
     });
 
@@ -247,6 +296,7 @@ function TimelineChart({
                 <Svg width={chartWidth} height={chartHeight}>
                     {yTicks.map((tick) => {
                         const y = getY(tick);
+
                         return (
                             <G key={tick}>
                                 <Line
@@ -327,15 +377,77 @@ function TimelineChart({
     );
 }
 
-function buildChangeText(
-    label: string,
-    score: number,
-    change: number | null
-) {
+function buildChangeText(label: string, score: number, change: number | null) {
     if (change === null) return `${label} ${score}점 · 첫 기록`;
     if (change > 0) return `${label} ${score}점 · 이전보다 +${change}`;
     if (change < 0) return `${label} ${score}점 · 이전보다 ${change}`;
     return `${label} ${score}점 · 변화 없음`;
+}
+
+function GuideCard({
+                       label,
+                       book,
+                       wished,
+                       loading,
+                       onPress,
+                       onToggleWish,
+                   }: {
+    label: string;
+    book: DiagnosisGuideBook | null;
+    wished: boolean;
+    loading: boolean;
+    onPress: () => void;
+    onToggleWish: () => void;
+}) {
+    return (
+        <Pressable
+            style={({ pressed }) => [
+                styles.guideCard,
+                pressed && book && { opacity: 0.9 },
+            ]}
+            onPress={book ? onPress : undefined}
+        >
+            <View style={styles.guideHeaderRow}>
+                <Text style={styles.guideLabel}>{label}</Text>
+
+                {book && (
+                    <Pressable
+                        onPress={(e) => {
+                            e.stopPropagation();
+                            onToggleWish();
+                        }}
+                        disabled={loading || !book.isbn}
+                        hitSlop={10}
+                        style={styles.heartButton}
+                    >
+                        <Ionicons
+                            name={wished ? "heart" : "heart-outline"}
+                            size={20}
+                            color={wished ? "#E85A5A" : COLORS.primary}
+                        />
+                    </Pressable>
+                )}
+            </View>
+
+            {book ? (
+                <View style={styles.guideInnerRow}>
+                    <Image source={{ uri: book.cover }} style={styles.guideCover} />
+
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.guideBookTitle}>{book.title}</Text>
+
+                        {!!book.author && (
+                            <Text style={styles.guideAuthor}>{book.author}</Text>
+                        )}
+
+                        <Text style={styles.guideDescription}>{book.description}</Text>
+                    </View>
+                </View>
+            ) : (
+                <Text style={styles.emptyText}>추천 결과가 없습니다.</Text>
+            )}
+        </Pressable>
+    );
 }
 
 export default function ReadingPreferenceScreen() {
@@ -359,6 +471,9 @@ export default function ReadingPreferenceScreen() {
         taste: null,
         growth: null,
     });
+
+    const [wishedMap, setWishedMap] = useState<Record<string, boolean>>({});
+    const [wishLoadingMap, setWishLoadingMap] = useState<Record<string, boolean>>({});
     const [loading, setLoading] = useState(true);
 
     const load = useCallback(async () => {
@@ -407,6 +522,43 @@ export default function ReadingPreferenceScreen() {
         load();
     }, [load]);
 
+    useEffect(() => {
+        const loadWishStates = async () => {
+            try {
+                const rawUser = await AsyncStorage.getItem("auth_user_id");
+                const userId = Number(rawUser);
+
+                if (!userId) return;
+
+                const books = [guide.taste, guide.growth].filter(
+                    (book): book is DiagnosisGuideBook => !!book && !!book.isbn
+                );
+
+                if (books.length === 0) return;
+
+                const entries = await Promise.all(
+                    books.map(async (book) => {
+                        try {
+                            const res = await checkWishlist(userId, book.isbn);
+                            return [book.isbn, !!res.isWishlisted] as const;
+                        } catch {
+                            return [book.isbn, false] as const;
+                        }
+                    })
+                );
+
+                setWishedMap((prev) => ({
+                    ...prev,
+                    ...Object.fromEntries(entries),
+                }));
+            } catch (e) {
+                console.log("추천 책 찜 상태 조회 실패", e);
+            }
+        };
+
+        loadWishStates();
+    }, [guide.taste?.isbn, guide.growth?.isbn]);
+
     const lowestStyle = useMemo(() => {
         return STYLE_META.slice().sort((a, b) => profile[a.key] - profile[b.key])[0];
     }, [profile]);
@@ -423,9 +575,65 @@ export default function ReadingPreferenceScreen() {
         setDetailOpen(true);
     };
 
+    const goRecommendedBookDetail = (book: DiagnosisGuideBook) => {
+        router.push({
+            pathname: "/(home)/resultdetails",
+            params: {
+                isbn: book.isbn,
+                title: book.title,
+                author: book.author,
+                publisher: book.publisher,
+                desc: book.description,
+                coverUrl: book.cover,
+            },
+        });
+    };
+
+    const toggleWishlist = async (book: DiagnosisGuideBook) => {
+        try {
+            if (!book.isbn) {
+                Alert.alert("오류", "책 ISBN 정보가 없어 찜할 수 없습니다.");
+                return;
+            }
+
+            const rawUser = await AsyncStorage.getItem("auth_user_id");
+            const userId = Number(rawUser);
+
+            if (!userId) {
+                Alert.alert("오류", "로그인 정보가 없습니다.");
+                return;
+            }
+
+            setWishLoadingMap((prev) => ({ ...prev, [book.isbn]: true }));
+
+            const isWished = !!wishedMap[book.isbn];
+
+            if (isWished) {
+                await removeWishlistByIsbn(userId, book.isbn);
+                setWishedMap((prev) => ({ ...prev, [book.isbn]: false }));
+            } else {
+                await addWishlist({
+                    userId,
+                    bookIsbn: book.isbn,
+                    bookTitle: book.title,
+                    author: book.author,
+                    coverImage: book.cover,
+                    publisher: book.publisher,
+                });
+
+                setWishedMap((prev) => ({ ...prev, [book.isbn]: true }));
+            }
+        } catch (e) {
+            Alert.alert("오류", e instanceof Error ? e.message : "찜 처리에 실패했습니다.");
+        } finally {
+            setWishLoadingMap((prev) => ({ ...prev, [book.isbn]: false }));
+        }
+    };
+
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
+
             <SafeAreaView style={styles.safe}>
                 <View style={styles.header}>
                     <Pressable onPress={() => router.back()} hitSlop={12} style={styles.headerLeft}>
@@ -439,11 +647,17 @@ export default function ReadingPreferenceScreen() {
                         <ActivityIndicator size="large" color={COLORS.primary} />
                     </View>
                 ) : (
-                    <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+                    <ScrollView
+                        contentContainerStyle={styles.container}
+                        showsVerticalScrollIndicator={false}
+                    >
                         <View style={styles.sectionCard}>
                             <Text style={styles.sectionTitle}>사고 스타일 프로필</Text>
                             <RadarChart data={profile} />
-                            <Text style={styles.profileSummary}>{summary}</Text>
+                            <View style={styles.summaryBox}>
+                                <Text style={styles.summaryLabel}>AI 요약</Text>
+                                <Text style={styles.profileSummary}>{summary}</Text>
+                            </View>
                         </View>
 
                         <View style={styles.sectionCard}>
@@ -490,53 +704,37 @@ export default function ReadingPreferenceScreen() {
                             <Text style={styles.sectionTitle}>맞춤 독서 가이드</Text>
 
                             <View style={styles.guideRow}>
-                                <View style={styles.guideCard}>
-                                    <Text style={styles.guideLabel}>당신의 스타일</Text>
-
-                                    {guide.taste ? (
-                                        <View style={styles.guideInnerRow}>
-                                            <Image
-                                                source={{ uri: guide.taste.cover }}
-                                                style={styles.guideCover}
-                                            />
-                                            <View style={{ flex: 1 }}>
-                                                <Text style={styles.guideBookTitle}>
-                                                    {guide.taste.title}
-                                                </Text>
-                                                <Text style={styles.guideDescription}>
-                                                    {guide.taste.description}
-                                                </Text>
-                                            </View>
-                                        </View>
-                                    ) : (
-                                        <Text style={styles.emptyText}>추천 결과가 없습니다.</Text>
+                                <GuideCard
+                                    label="당신의 스타일"
+                                    book={guide.taste}
+                                    wished={!!(guide.taste?.isbn && wishedMap[guide.taste.isbn])}
+                                    loading={!!(
+                                        guide.taste?.isbn && wishLoadingMap[guide.taste.isbn]
                                     )}
-                                </View>
+                                    onPress={() =>
+                                        guide.taste && goRecommendedBookDetail(guide.taste)
+                                    }
+                                    onToggleWish={() =>
+                                        guide.taste && toggleWishlist(guide.taste)
+                                    }
+                                />
 
-                                <View style={styles.guideCard}>
-                                    <Text style={styles.guideLabel}>
-                                        추천 도서 · {lowestStyle.label} 보완
-                                    </Text>
-
-                                    {guide.growth ? (
-                                        <View style={styles.guideInnerRow}>
-                                            <Image
-                                                source={{ uri: guide.growth.cover }}
-                                                style={styles.guideCover}
-                                            />
-                                            <View style={{ flex: 1 }}>
-                                                <Text style={styles.guideBookTitle}>
-                                                    {guide.growth.title}
-                                                </Text>
-                                                <Text style={styles.guideDescription}>
-                                                    {guide.growth.description}
-                                                </Text>
-                                            </View>
-                                        </View>
-                                    ) : (
-                                        <Text style={styles.emptyText}>추천 결과가 없습니다.</Text>
+                                <GuideCard
+                                    label={`추천 도서 · ${lowestStyle.label} 보완`}
+                                    book={guide.growth}
+                                    wished={!!(
+                                        guide.growth?.isbn && wishedMap[guide.growth.isbn]
                                     )}
-                                </View>
+                                    loading={!!(
+                                        guide.growth?.isbn && wishLoadingMap[guide.growth.isbn]
+                                    )}
+                                    onPress={() =>
+                                        guide.growth && goRecommendedBookDetail(guide.growth)
+                                    }
+                                    onToggleWish={() =>
+                                        guide.growth && toggleWishlist(guide.growth)
+                                    }
+                                />
                             </View>
                         </View>
                     </ScrollView>
@@ -555,10 +753,16 @@ export default function ReadingPreferenceScreen() {
                             {selectedBook && (
                                 <View style={styles.modalBulletWrap}>
                                     <Text style={styles.modalBullet}>
-                                        {buildChangeText(selectedStyleLabel, selectedScore, selectedChange)}
+                                        {buildChangeText(
+                                            selectedStyleLabel,
+                                            selectedScore,
+                                            selectedChange
+                                        )}
                                     </Text>
                                     <Text style={styles.modalBullet}>
-                                        → {selectedInsight || "이 책이 사고 변화에 영향을 주었습니다."}
+                                        →{" "}
+                                        {selectedInsight ||
+                                            "이 책이 사고 변화에 영향을 주었습니다."}
                                     </Text>
                                 </View>
                             )}
@@ -582,26 +786,31 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: COLORS.bg,
     },
+
     header: {
         paddingHorizontal: 16,
         paddingTop: 8,
         paddingBottom: 4,
     },
+
     headerLeft: {
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
     },
+
     headerTitle: {
         fontSize: 18,
         fontWeight: "900",
         color: COLORS.primary,
     },
+
     loadingWrap: {
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
     },
+
     container: {
         paddingHorizontal: 16,
         paddingBottom: 18,
@@ -626,24 +835,39 @@ const styles = StyleSheet.create({
     radarWrap: {
         alignItems: "center",
         justifyContent: "center",
+        position: "relative",
         marginTop: 0,
         marginBottom: 0,
     },
 
     profileSummary: {
-        marginTop: 2,
-        fontSize: 14,
-        lineHeight: 22,
-        fontWeight: "800",
+        fontSize: 13,
+        lineHeight: 21,
+        fontWeight: "700",
         color: COLORS.primary,
     },
+    summaryBox: {
+        marginTop: 10,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        backgroundColor: "#FFFDFC",
+        padding: 12,
+    },
 
+    summaryLabel: {
+        color: COLORS.muted,
+        fontSize: 12,
+        fontWeight: "900",
+        marginBottom: 6,
+    },
     segmentWrap: {
         flexDirection: "row",
         flexWrap: "wrap",
         gap: 8,
         marginBottom: 8,
     },
+
     segmentBtn: {
         paddingHorizontal: 16,
         paddingVertical: 10,
@@ -652,29 +876,36 @@ const styles = StyleSheet.create({
         borderColor: "#E5DCD3",
         backgroundColor: COLORS.white,
     },
+
     segmentBtnActive: {
         backgroundColor: "#B19277",
         borderColor: "#B19277",
     },
+
     segmentText: {
         color: COLORS.primary,
         fontWeight: "800",
     },
+
     segmentTextActive: {
         color: COLORS.white,
     },
+
     chartWrap: {
         position: "relative",
         alignSelf: "flex-start",
     },
+
     emptyText: {
         color: COLORS.muted,
         fontSize: 13,
         fontWeight: "700",
     },
+
     guideRow: {
         gap: 12,
     },
+
     guideCard: {
         borderRadius: 14,
         borderWidth: 1,
@@ -682,29 +913,61 @@ const styles = StyleSheet.create({
         backgroundColor: "#FFFDFC",
         padding: 12,
     },
+
+    guideHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 10,
+    },
+
     guideLabel: {
         color: COLORS.primary,
         fontSize: 14,
         fontWeight: "900",
-        marginBottom: 10,
+        flex: 1,
+        paddingRight: 8,
     },
+
+    heartButton: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#FFFDFC",
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+
     guideInnerRow: {
         flexDirection: "row",
         gap: 12,
         alignItems: "center",
     },
+
     guideCover: {
         width: 70,
         height: 98,
         borderRadius: 10,
         backgroundColor: COLORS.secondary,
     },
+
     guideBookTitle: {
         color: COLORS.primary,
         fontSize: 15,
         fontWeight: "900",
-        marginBottom: 6,
+        marginBottom: 4,
     },
+
+    guideAuthor: {
+        marginTop: 2,
+        marginBottom: 4,
+        fontSize: 11,
+        fontWeight: "700",
+        color: COLORS.neutralDark,
+    },
+
     guideDescription: {
         color: COLORS.primary,
         fontSize: 13,
@@ -712,32 +975,38 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         flexShrink: 1,
     },
+
     modalBackdrop: {
         flex: 1,
         backgroundColor: "rgba(0,0,0,0.2)",
         justifyContent: "center",
         paddingHorizontal: 24,
     },
+
     modalCard: {
         backgroundColor: COLORS.white,
         borderRadius: 20,
         padding: 18,
     },
+
     modalBookTitle: {
         color: COLORS.primary,
         fontSize: 19,
         fontWeight: "900",
         marginBottom: 14,
     },
+
     modalBulletWrap: {
         gap: 10,
     },
+
     modalBullet: {
         color: COLORS.primary,
         fontSize: 14,
         lineHeight: 22,
         fontWeight: "800",
     },
+
     modalCloseBtn: {
         marginTop: 18,
         alignSelf: "center",
@@ -746,6 +1015,7 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         backgroundColor: "#B19277",
     },
+
     modalCloseText: {
         color: COLORS.white,
         fontWeight: "900",

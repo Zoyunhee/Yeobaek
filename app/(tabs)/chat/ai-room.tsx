@@ -62,24 +62,6 @@ function mapThinkingTypeToKorean(type?: string) {
     }
 }
 
-function isLikelyClosingMessage(text?: string) {
-    if (!text) return false;
-
-    const normalized = text.replace(/\s/g, "");
-    const markers = [
-        "오늘은여기까지",
-        "여기까지나눠요",
-        "여기까지할게요",
-        "마무리해볼까요",
-        "함께고민해줘서고마워요",
-        "수고하셨습니다",
-        "대화를마칠게요",
-        "마무리하겠습니다",
-        "정리해보면",
-    ];
-
-    return markers.some((marker) => normalized.includes(marker));
-}
 
 function buildConversationSummary(messages: AiMessage[]) {
     const userTexts = messages
@@ -284,22 +266,20 @@ export default function AiRoomScreen() {
                     flatListRef.current?.scrollToEnd({ animated: true });
                 }, 50);
 
-                await sendAiMessage(roomId, text.trim());
+                const res = await sendAiMessage(roomId, text.trim());
 
-                const refreshed = await getAiMessages(roomId);
-                const nextMessages = refreshed.data ?? [];
-                setMessages(nextMessages);
+                const returnedMessages = res.data?.messages ?? [];
+
+                setMessages((prev) => [
+                    ...prev.filter((m) => m.id !== optimisticMessage.id),
+                    ...returnedMessages,
+                ]);
 
                 setTimeout(() => {
                     flatListRef.current?.scrollToEnd({ animated: true });
                 }, 80);
 
-                const lastAi = [...nextMessages].reverse().find((m) => m.sender === "AI");
-                if (
-                    lastAi &&
-                    isLikelyClosingMessage(lastAi.text) &&
-                    !hasOpenedSummaryRef.current
-                ) {
+                if (res.data?.finished && !hasOpenedSummaryRef.current) {
                     hasOpenedSummaryRef.current = true;
                     await finishConversation();
                 }
