@@ -9,45 +9,27 @@ import { useFocusEffect } from "@react-navigation/native";
 import {
     getMyProfile,
     getWishlist,
-    getReadingNotes,
+    getBookReviews,
     getReadCompletions,
-    getThinkingStyleStats,
-    getActivityStats,
-    getEmotionGenreStats,
-    getAvailableGenres,
+    getDiagnosisLatest,
+    getDiagnosisTrend,
 } from "@/services/api";
 
 type Book = { id: string; title: string; author: string; createdAt?: string; coverUrl?: string };
-type CompletedChat = { id: string; createdAt?: string; coverUrl?: string };
-type Note = { id: string; createdAt?: string; coverUrl?: string };
+type CompletedChat = {
+    id: string;
+    roomId?: string;
+    sourceRoomId?: string;
+    createdAt?: string;
+    coverUrl?: string;
+};
+type ReviewPreviewItem = { id: string; createdAt?: string; coverUrl?: string };
 type ChatEvent = { id: string; createdAt: string };
-
-type ThinkingStyleApi = {
-    critic: number;
-    emotion: number;
-    analysis: number;
-    empathy: number;
-    creative: number;
-};
-
-type PreviewEmotionItem = {
-    emoji: string;
-    percent: number;
-};
 
 const MONTHLY_CHAT_EVENTS_KEY = "monthly_chat_events_v1";
 
 const DEFAULT_AVATAR = require("../../assets/images/default-avatar.png");
 const BOOK_COVER = require("../../assets/images/book-cover.png");
-
-const EMOTION_ITEMS = [
-    { key: "EXCITED", emoji: "🤩" },
-    { key: "HAPPY", emoji: "😊" },
-    { key: "CALM", emoji: "🙂" },
-    { key: "ANXIOUS", emoji: "😟" },
-    { key: "SAD", emoji: "😢" },
-    { key: "ANGRY", emoji: "😠" },
-] as const;
 
 function monthRange(now = new Date()) {
     const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
@@ -115,59 +97,21 @@ function mapReadingStyleToKorean(style: string) {
     return map[style] ?? style;
 }
 
-function getTopThinkingStyleLabel(data: ThinkingStyleApi | null) {
-    if (!data) return "분석 중";
-
-    const entries = [
-        { label: "비평형", value: data.critic },
-        { label: "감정형", value: data.emotion },
-        { label: "분석형", value: data.analysis },
-        { label: "공감형", value: data.empathy },
-        { label: "창의형", value: data.creative },
-    ].sort((a, b) => b.value - a.value);
-
-    return entries[0]?.label ?? "분석 중";
-}
-
-function buildPreviewEmotions(
-    apiSlices: Array<{ label: string; value: number }> = []
-): { top1: string; items: PreviewEmotionItem[] } {
-    const valueMap = new Map<string, number>();
-
-    for (const slice of apiSlices) {
-        valueMap.set(String(slice.label), Number(slice.value) || 0);
+function mapThinkingTypeToKorean(type?: string) {
+    switch (type) {
+        case "EMOTION":
+            return "감정형";
+        case "ANALYSIS":
+            return "분석형";
+        case "CRITICISM":
+            return "비평형";
+        case "EMPATHY":
+            return "공감형";
+        case "CREATIVITY":
+            return "창의형";
+        default:
+            return "분석 중";
     }
-
-    const fixed = EMOTION_ITEMS.map((item) => ({
-        emoji: item.emoji,
-        value: valueMap.get(item.key) ?? 0,
-    }));
-
-    const total = fixed.reduce((sum, item) => sum + item.value, 0);
-
-    if (total === 0) {
-        return {
-            top1: "🙂",
-            items: [
-                { emoji: "🙂", percent: 100 },
-                { emoji: "😊", percent: 0 },
-                { emoji: "😢", percent: 0 },
-            ],
-        };
-    }
-
-    const top3 = [...fixed]
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 3)
-        .map((item) => ({
-            emoji: item.emoji,
-            percent: Math.round((item.value / total) * 100),
-        }));
-
-    return {
-        top1: top3[0]?.emoji ?? "🙂",
-        items: top3,
-    };
 }
 
 function countRecent7DaysChats(completions: CompletedChat[]) {
@@ -184,50 +128,6 @@ function countRecent7DaysChats(completions: CompletedChat[]) {
     }).length;
 }
 
-function getMostActiveHourLabel(
-    activity: Array<{ hour: number; participationScore: number }> = []
-) {
-    if (activity.length === 0) return "데이터 없음";
-
-    const top = [...activity].sort(
-        (a, b) => (Number(b.participationScore) || 0) - (Number(a.participationScore) || 0)
-    )[0];
-
-    if (!top) return "데이터 없음";
-
-    return `${String(top.hour).padStart(2, "0")}시`;
-}
-
-function getChronotypeLabel(
-    activity: Array<{ hour: number; participationScore: number }> = []
-) {
-    if (activity.length === 0) return "분석 중";
-
-    let morning = 0;   // 05~11
-    let afternoon = 0; // 12~17
-    let evening = 0;   // 18~21
-    let night = 0;     // 22~04
-
-    for (const item of activity) {
-        const hour = Number(item.hour);
-        const score = Number(item.participationScore) || 0;
-
-        if (hour >= 5 && hour <= 11) morning += score;
-        else if (hour >= 12 && hour <= 17) afternoon += score;
-        else if (hour >= 18 && hour <= 21) evening += score;
-        else night += score;
-    }
-
-    const buckets = [
-        { label: "오전형", value: morning },
-        { label: "오후형", value: afternoon },
-        { label: "저녁형", value: evening },
-        { label: "야간형", value: night },
-    ].sort((a, b) => b.value - a.value);
-
-    return buckets[0]?.label ?? "분석 중";
-}
-
 export default function ProfileScreen() {
     const router = useRouter();
 
@@ -239,130 +139,134 @@ export default function ProfileScreen() {
 
     const [likedBooks, setLikedBooks] = useState<Book[]>([]);
     const [completedChats, setCompletedChats] = useState<CompletedChat[]>([]);
-    const [notes, setNotes] = useState<Note[]>([]);
+    const [reviews, setReviews] = useState<ReviewPreviewItem[]>([]);
     const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
 
     const [thinkingStylePreview, setThinkingStylePreview] = useState("분석 중");
+    const [summaryPreview, setSummaryPreview] = useState("자가진단 요약이 없습니다.");
+    const [growthPointPreview, setGrowthPointPreview] = useState("분석 중");
     const [weeklyChats, setWeeklyChats] = useState(0);
-    const [activeHourLabel, setActiveHourLabel] = useState("데이터 없음");
-    const [chronotypeLabel, setChronotypeLabel] = useState("분석 중");
-    const [emotionTop1, setEmotionTop1] = useState("🙂");
-    const [emotionPreview, setEmotionPreview] = useState<PreviewEmotionItem[]>([
-        { emoji: "🙂", percent: 100 },
-    ]);
+    const [trendPreview, setTrendPreview] = useState("최근 변화 데이터가 없습니다.");
 
     const load = useCallback(async () => {
         try {
             const userIdRaw = await AsyncStorage.getItem("auth_user_id");
-
-            if (!userIdRaw) {
-                return;
-            }
+            if (!userIdRaw) return;
 
             const userId = Number(userIdRaw);
 
             const [
-                profileRes,
-                wishlistRes,
-                notesRes,
-                completionsRes,
-                eventRaw,
-                thinkingRes,
-                activityRes,
-                genresRes,
-            ] = await Promise.all([
+                profileResult,
+                wishlistResult,
+                reviewsResult,
+                completionsResult,
+                eventResult,
+                latestDiagnosisResult,
+                trendResult,
+            ] = await Promise.allSettled([
                 getMyProfile(userId),
                 getWishlist(userId),
-                getReadingNotes(userId),
+                getBookReviews(userId),
                 getReadCompletions(userId),
                 AsyncStorage.getItem(MONTHLY_CHAT_EVENTS_KEY),
-                getThinkingStyleStats(),
-                getActivityStats(),
-                getAvailableGenres(),
+                getDiagnosisLatest(userId),
+                getDiagnosisTrend(userId),
             ]);
 
-            const profile = profileRes.data;
+            if (profileResult.status !== "fulfilled") {
+                throw profileResult.reason;
+            }
 
+            const profile = profileResult.value.data;
             setNickname(profile.nickname || "사용자");
             setAvatarUri(profile.profileImage || null);
             setGenres((profile.genres || []).map(mapGenreToKorean));
             setStylesPref((profile.readingStyles || []).map(mapReadingStyleToKorean));
 
-            const liked = (wishlistRes.data || []).map((item) => ({
-                id: String(item.id),
-                title: item.bookTitle,
-                author: item.author || "",
-                createdAt: item.createdAt,
-                coverUrl: item.coverImage,
-            }));
-            setLikedBooks(liked);
+            if (wishlistResult.status === "fulfilled") {
+                const liked = (wishlistResult.value.data || []).map((item: any) => ({
+                    id: String(item.id),
+                    title: item.bookTitle,
+                    author: item.author || "",
+                    createdAt: item.createdAt,
+                    coverUrl: item.coverImage,
+                }));
+                setLikedBooks(liked);
+            } else {
+                setLikedBooks([]);
+            }
 
-            const noteList = (notesRes.data || []).map((item) => ({
-                id: String(item.id),
-                createdAt: item.createdAt,
-                coverUrl: item.coverImage,
-            }));
-            setNotes(noteList);
+            if (reviewsResult.status === "fulfilled") {
+                const reviewList = (reviewsResult.value.data || []).map((item: any) => ({
+                    id: String(item.id),
+                    createdAt: item.createdAt,
+                    coverUrl: item.coverImage,
+                }));
+                setReviews(reviewList);
+            } else {
+                setReviews([]);
+            }
 
-            const completions = (completionsRes.data || []).map((item) => ({
-                id: String(item.id),
-                createdAt: item.completedAt,
-                coverUrl: item.bookCover,
-            }));
-            setCompletedChats(completions);
+            let completions: CompletedChat[] = [];
+            if (completionsResult.status === "fulfilled") {
+                completions = (completionsResult.value.data || []).map((item: any) => {
+                    const actualRoomId = item.roomId ?? item.sourceRoomId;
 
-            try {
-                setChatEvents(eventRaw ? (JSON.parse(eventRaw) as ChatEvent[]) : []);
-            } catch {
+                    return {
+                        id: String(item.id),
+                        roomId: actualRoomId ? String(actualRoomId) : undefined,
+                        sourceRoomId: item.sourceRoomId ? String(item.sourceRoomId) : undefined,
+                        createdAt: item.completedAt,
+                        coverUrl: item.bookCover,
+                    };
+                });
+
+                setCompletedChats(completions);
+            } else {
+                setCompletedChats([]);
+            }
+
+            if (eventResult.status === "fulfilled") {
+                try {
+                    setChatEvents(eventResult.value ? (JSON.parse(eventResult.value) as ChatEvent[]) : []);
+                } catch {
+                    setChatEvents([]);
+                }
+            } else {
                 setChatEvents([]);
             }
 
-            const activity = activityRes.data || [];
-
-            setThinkingStylePreview(getTopThinkingStyleLabel(thinkingRes.data));
             setWeeklyChats(countRecent7DaysChats(completions));
-            setActiveHourLabel(getMostActiveHourLabel(activity));
-            setChronotypeLabel(getChronotypeLabel(activity));
 
-            const availableGenres = (genresRes.data || []).filter(Boolean);
+            if (latestDiagnosisResult.status === "fulfilled") {
+                const latest = latestDiagnosisResult.value.data;
 
-            if (availableGenres.length === 0) {
-                setEmotionTop1("🙂");
-                setEmotionPreview([
-                    { emoji: "🙂", percent: 100 },
-                    { emoji: "😊", percent: 0 },
-                    { emoji: "😢", percent: 0 },
-                ]);
+                setThinkingStylePreview(mapThinkingTypeToKorean(latest.topType));
+                setSummaryPreview(latest.summaryComment || "자가진단 요약이 없습니다.");
+                setGrowthPointPreview(`${mapThinkingTypeToKorean(latest.growthType)} 확장 필요`);
             } else {
-                const emotionResults = await Promise.all(
-                    availableGenres.map((g) =>
-                        getEmotionGenreStats({
-                            mode: "GENRE_TO_EMOTION",
-                            genre: g,
-                        })
-                    )
-                );
+                setThinkingStylePreview("분석 중");
+                setSummaryPreview("자가진단 요약이 없습니다.");
+                setGrowthPointPreview("분석 중");
+            }
 
-                const mergedMap = new Map<string, number>();
+            if (trendResult.status === "fulfilled") {
+                const summary = trendResult.value.summary;
 
-                for (const res of emotionResults) {
-                    const slices = res.data?.slices || [];
+                const trendLine =
+                    summary?.emotion ||
+                    summary?.analysis ||
+                    summary?.criticism ||
+                    summary?.empathy ||
+                    summary?.creativity ||
+                    "최근 변화 데이터가 없습니다.";
 
-                    for (const slice of slices) {
-                        const label = String(slice.label);
-                        const value = Number(slice.value) || 0;
-                        mergedMap.set(label, (mergedMap.get(label) ?? 0) + value);
-                    }
-                }
+                const shortTrend =
+                    trendLine.length > 20 ? `${trendLine.slice(0, 20)}…` : trendLine;
 
-                const mergedSlices = Array.from(mergedMap.entries()).map(([label, value]) => ({
-                    label,
-                    value,
-                }));
-
-                const preview = buildPreviewEmotions(mergedSlices);
-                setEmotionTop1(preview.top1);
-                setEmotionPreview(preview.items);
+                setTrendPreview(shortTrend);
+            } else {
+                setTrendPreview("최근 변화 데이터가 없습니다.");
             }
         } catch (error) {
             const message =
@@ -384,7 +288,7 @@ export default function ProfileScreen() {
 
     const likedCount = likedBooks.length;
     const completedCount = completedChats.length;
-    const noteCount = notes.length;
+    const reviewCount = reviews.length;
 
     const monthlyChatCount = useMemo(() => {
         if (chatEvents.length > 0) {
@@ -405,11 +309,11 @@ export default function ProfileScreen() {
         return latest.coverUrl ? { uri: latest.coverUrl } : BOOK_COVER;
     }, [completedChats]);
 
-    const notePreview = useMemo(() => {
-        const latest = pickLatest(notes);
+    const reviewPreview = useMemo(() => {
+        const latest = pickLatest(reviews);
         if (!latest) return null;
         return latest.coverUrl ? { uri: latest.coverUrl } : BOOK_COVER;
-    }, [notes]);
+    }, [reviews]);
 
     return (
         <SafeAreaView style={styles.safe}>
@@ -443,19 +347,49 @@ export default function ProfileScreen() {
                     </View>
                 </View>
 
-                <Pressable
-                    onPress={() => router.push("/(profile)/library")}
-                    style={({ pressed }) => [styles.card, pressed && { opacity: 0.92 }]}
-                >
+                <View style={styles.card}>
                     <Text style={styles.cardTitle}>나의 서재</Text>
                     <View style={styles.cardLine} />
 
                     <View style={styles.statsRow}>
-                        <StatBlock icon="heart" label="찜" value={`${likedCount}권`} previewCover={likedPreview} />
-                        <StatBlock icon="bubble" label="완료 채팅" value={`${completedCount}회`} previewCover={completedPreview} />
-                        <StatBlock icon="book" label="독서장" value={`${noteCount}장`} previewCover={notePreview} />
+                        <StatBlock
+                            icon="heart"
+                            label="찜"
+                            value={`${likedCount}권`}
+                            previewCover={likedPreview}
+                            onPress={() =>
+                                router.push({
+                                    pathname: "/(profile)/library",
+                                    params: { tab: "liked" },
+                                })
+                            }
+                        />
+                        <StatBlock
+                            icon="bubble"
+                            label="완료 채팅"
+                            value={`${completedCount}회`}
+                            previewCover={completedPreview}
+                            onPress={() =>
+                                router.push({
+                                    pathname: "/(profile)/library",
+                                    params: { tab: "completed" },
+                                })
+                            }
+                        />
+                        <StatBlock
+                            icon="book"
+                            label="독서장"
+                            value={`${reviewCount}장`}
+                            previewCover={reviewPreview}
+                            onPress={() =>
+                                router.push({
+                                    pathname: "/(profile)/library",
+                                    params: { tab: "reviews" },
+                                })
+                            }
+                        />
                     </View>
-                </Pressable>
+                </View>
 
                 <Pressable
                     onPress={() => router.push("/(profile)/reading-preference")}
@@ -470,21 +404,34 @@ export default function ProfileScreen() {
 
                     <View style={styles.cardLine} />
 
-                    <View style={previewStyles.bullets}>
-                        <BulletRow title="사고 스타일" value={thinkingStylePreview} />
-                        <BulletRow title="최근 감정 Top1" value={emotionTop1} />
+                    <View style={previewStyles.previewWrap}>
+                        <View style={previewStyles.badgeRow}>
+                            <View style={previewStyles.mainBadge}>
+                                <Text style={previewStyles.mainBadgeText}>{thinkingStylePreview}</Text>
+                            </View>
 
-                        <View style={previewStyles.emojiRow}>
-                            {emotionPreview.map((item, idx) => (
-                                <Text key={`${item.emoji}-${idx}`} style={previewStyles.emojiItem}>
-                                    {item.emoji} {item.percent}%
-                                </Text>
-                            ))}
+                            <View style={previewStyles.subBadge}>
+                                <Text style={previewStyles.subBadgeText}>{growthPointPreview}</Text>
+                            </View>
                         </View>
 
-                        <BulletRow title="최근 7일 채팅" value={`${weeklyChats}회`} />
-                        <BulletRow title="가장 활발한 시간대" value={activeHourLabel} />
-                        <BulletRow title="독서/채팅 성향" value={chronotypeLabel} />
+                        <Text style={previewStyles.summaryText} numberOfLines={2}>
+                            {summaryPreview}
+                        </Text>
+
+                        <View style={previewStyles.miniChipRow}>
+                            <View style={previewStyles.miniChip}>
+                                <Text style={previewStyles.miniChipLabel}>최근 7일</Text>
+                                <Text style={previewStyles.miniChipValue}>{weeklyChats}회</Text>
+                            </View>
+
+                            <View style={previewStyles.miniChip}>
+                                <Text style={previewStyles.miniChipLabel}>최근 변화</Text>
+                                <Text style={previewStyles.miniChipValue} numberOfLines={1}>
+                                    {trendPreview}
+                                </Text>
+                            </View>
+                        </View>
                     </View>
                 </Pressable>
             </ScrollView>
@@ -497,16 +444,18 @@ function StatBlock({
                        label,
                        value,
                        previewCover,
+                       onPress,
                    }: {
     icon: "heart" | "bubble" | "book";
     label: string;
     value: string;
     previewCover: any | null;
+    onPress: () => void;
 }) {
     const iconName = icon === "heart" ? "heart" : icon === "bubble" ? "bubble.left" : "book";
 
     return (
-        <View style={styles.statItem}>
+        <Pressable onPress={onPress} style={styles.statItem}>
             <View style={styles.statIconCircle}>
                 <IconSymbol name={iconName} size={18} color={COLORS.primary} />
             </View>
@@ -514,18 +463,7 @@ function StatBlock({
             <Text style={styles.statValue}>{value}</Text>
 
             {previewCover ? <Image source={previewCover} style={styles.statCover} /> : <View style={styles.statCover} />}
-        </View>
-    );
-}
-
-function BulletRow({ title, value }: { title: string; value: string }) {
-    return (
-        <View style={styles.bulletRow}>
-            <View style={styles.bulletDot} />
-            <Text style={styles.bulletText}>
-                {title} : <Text style={styles.bulletValue}>{value}</Text>
-            </Text>
-        </View>
+        </Pressable>
     );
 }
 
@@ -643,30 +581,6 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border,
         backgroundColor: COLORS.secondary,
     },
-
-    bulletRow: {
-        flexDirection: "row",
-        alignItems: "flex-start",
-        gap: 10,
-    },
-    bulletDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: COLORS.primary,
-        marginTop: 7,
-    },
-    bulletText: {
-        flex: 1,
-        fontSize: 14,
-        fontWeight: "900",
-        color: COLORS.primary,
-        lineHeight: 20,
-    },
-    bulletValue: {
-        fontWeight: "900",
-        color: COLORS.primary,
-    },
 });
 
 const previewStyles = StyleSheet.create({
@@ -687,22 +601,74 @@ const previewStyles = StyleSheet.create({
         lineHeight: 18,
     },
 
-    bullets: {
-        marginTop: 14,
-        gap: 12,
+    previewWrap: {
+        marginTop: 16,
+        gap: 14,
     },
 
-    emojiRow: {
-        marginTop: 6,
-        marginBottom: 4,
+    badgeRow: {
         flexDirection: "row",
-        justifyContent: "center",
-        gap: 14,
+        gap: 8,
         flexWrap: "wrap",
     },
-    emojiItem: {
+
+    mainBadge: {
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderRadius: 999,
+        backgroundColor: "#B19277",
+    },
+    mainBadgeText: {
+        color: COLORS.white,
+        fontSize: 14,
+        fontWeight: "900",
+    },
+
+    subBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 999,
+        backgroundColor: COLORS.secondary,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    subBadgeText: {
+        color: COLORS.primary,
+        fontSize: 13,
+        fontWeight: "800",
+    },
+
+    summaryText: {
+        color: COLORS.primary,
+        fontSize: 14,
+        lineHeight: 22,
+        fontWeight: "800",
+    },
+
+    miniChipRow: {
+        flexDirection: "row",
+        gap: 10,
+    },
+
+    miniChip: {
+        flex: 1,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        backgroundColor: "#FFFDFC",
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+    },
+    miniChipLabel: {
+        color: COLORS.muted,
+        fontSize: 11,
+        fontWeight: "800",
+        marginBottom: 6,
+    },
+    miniChipValue: {
+        color: COLORS.primary,
         fontSize: 13,
         fontWeight: "900",
-        color: COLORS.primary,
+        lineHeight: 18,
     },
 });

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     View,
     Text,
@@ -10,7 +10,7 @@ import {
     ActivityIndicator,
     Alert,
 } from "react-native";
-import { Stack, useFocusEffect, useRouter } from "expo-router";
+import { Stack, useFocusEffect, useRouter, useLocalSearchParams } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { COLORS } from "@/constants/colors";
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -34,7 +34,9 @@ type LikedBook = {
 };
 
 type CompletedItem = {
-    id: number;
+    id: number; // completion id
+    roomId?: number; // actual chat room id
+    reviewId?: number;
     bookTitle: string;
     bookAuthor?: string;
     bookCover?: string;
@@ -77,24 +79,36 @@ function formatDateText(value?: string) {
     ).padStart(2, "0")}`;
 }
 
+function isTabKey(value: unknown): value is TabKey {
+    return value === "liked" || value === "completed" || value === "reviews";
+}
+
 export default function LibraryScreen() {
     const router = useRouter();
-    const [tab, setTab] = useState<TabKey>("liked");
+    const params = useLocalSearchParams();
+    const tabParam = Array.isArray(params.tab) ? params.tab[0] : params.tab;
+
+    const [tab, setTab] = useState<TabKey>(isTabKey(tabParam) ? tabParam : "liked");
     const [loading, setLoading] = useState(true);
 
     const [liked, setLiked] = useState<LikedBook[]>([]);
     const [completed, setCompleted] = useState<CompletedMergedItem[]>([]);
     const [reviews, setReviews] = useState<ReviewItem[]>([]);
 
+    useEffect(() => {
+        if (isTabKey(tabParam)) {
+            setTab(tabParam);
+        }
+    }, [tabParam]);
+
     const load = useCallback(async () => {
         try {
             setLoading(true);
 
-            const rawUser = await AsyncStorage.getItem("user");
-            if (!rawUser) throw new Error("로그인 정보가 없습니다.");
+            const rawAuthUserId = await AsyncStorage.getItem("auth_user_id");
+            if (!rawAuthUserId) throw new Error("로그인 정보가 없습니다.");
 
-            const user = JSON.parse(rawUser);
-            const userId = Number(user.id);
+            const userId = Number(rawAuthUserId);
 
             const [wishlistRes, completionRes, reviewRes, completedMetaRaw] = await Promise.all([
                 getWishlist(userId),
@@ -110,13 +124,14 @@ export default function LibraryScreen() {
                 ? JSON.parse(completedMetaRaw)
                 : [];
 
-            const mergedCompleted: CompletedMergedItem[] = completionList.map((item) => {
-                const matched = completedMeta.find(
-                    (meta) => meta.bookTitle === item.bookTitle
-                );
+            const mergedCompleted: CompletedMergedItem[] = completionList.map((item: any) => {
+                const matched =
+                    completedMeta.find((meta) => item.roomId && meta.roomId === item.roomId) ??
+                    completedMeta.find((meta) => meta.bookTitle === item.bookTitle);
 
                 return {
                     ...item,
+                    roomId: item.roomId,
                     topicLabel: matched?.topicLabel,
                     topicDescription: matched?.topicDescription,
                 };
@@ -178,7 +193,7 @@ export default function LibraryScreen() {
                     <TabButton
                         active={tab === "reviews"}
                         iconName={tab === "reviews" ? "book.fill" : "book"}
-                        label="독후감"
+                        label="독서장"
                         onPress={() => setTab("reviews")}
                     />
                 </View>
@@ -200,19 +215,25 @@ export default function LibraryScreen() {
                                 return (
                                     <CompletedRow
                                         item={item as CompletedMergedItem}
-                                        onPress={() =>
+                                        onPress={() => {
+                                            const targetRoomId = item.roomId ?? item.id;
+
+                                            if (!targetRoomId) {
+                                                Alert.alert("오류", "채팅방 정보를 찾을 수 없습니다.");
+                                                return;
+                                            }
+
                                             router.push({
                                                 pathname: "/(tabs)/chat/ai-room",
                                                 params: {
-                                                    roomId: String(item.id),
+                                                    roomId: String(targetRoomId),
                                                     bookTitle: item.bookTitle,
                                                     topicLabel: item.topicLabel ?? "선택 주제",
-                                                    topicDescription:
-                                                        item.topicDescription ?? "",
+                                                    topicDescription: item.topicDescription ?? "",
                                                     readOnly: "true",
                                                 },
-                                            })
-                                        }
+                                            });
+                                        }}
                                     />
                                 );
                             }

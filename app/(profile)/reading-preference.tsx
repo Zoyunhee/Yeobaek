@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     View,
     Text,
@@ -8,10 +8,13 @@ import {
     Modal,
     Image,
     useWindowDimensions,
+    ActivityIndicator,
+    Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import Svg, {
     Circle,
     G,
@@ -21,17 +24,18 @@ import Svg, {
     Text as SvgText,
 } from "react-native-svg";
 import { COLORS } from "@/constants/colors";
-
-type StyleKey = "emotion" | "analysis" | "critic" | "empathy" | "creative";
-
-type TimelineBook = {
-    id: string;
-    title: string;
-    cover: string;
-    scores: Record<StyleKey, number>;
-    changes: Record<StyleKey, number>;
-    insight: string;
-};
+import {
+    getDiagnosisRadar,
+    getDiagnosisTrend,
+    getDiagnosisRecommendations,
+    addWishlist,
+    removeWishlistByIsbn,
+    checkWishlist,
+    type StyleKey,
+    type DiagnosisTimelineItem,
+    type DiagnosisGuide,
+    type DiagnosisGuideBook,
+} from "@/services/api";
 
 const STYLE_META: { key: StyleKey; label: string }[] = [
     { key: "emotion", label: "감정" },
@@ -40,113 +44,6 @@ const STYLE_META: { key: StyleKey; label: string }[] = [
     { key: "empathy", label: "공감" },
     { key: "creative", label: "창의" },
 ];
-
-const DUMMY_PROFILE: Record<StyleKey, number> = {
-    emotion: 78,
-    analysis: 54,
-    critic: 43,
-    empathy: 70,
-    creative: 58,
-};
-
-const DUMMY_SUMMARY =
-    "당신은 감정 중심 독서가 강하며 최근 분석적 사고가 증가하는 경향이 있습니다.";
-
-const DUMMY_TIMELINE: TimelineBook[] = [
-    {
-        id: "1",
-        title: "어린왕자",
-        cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794?q=80&w=400&auto=format&fit=crop",
-        scores: {
-            emotion: 54,
-            analysis: 28,
-            critic: 22,
-            empathy: 52,
-            creative: 49,
-        },
-        changes: {
-            emotion: 10,
-            analysis: 6,
-            critic: 3,
-            empathy: 12,
-            creative: 8,
-        },
-        insight: "감정적 몰입과 공감 사고에 영향을 준 책",
-    },
-    {
-        id: "2",
-        title: "코스모스",
-        cover: "https://images.unsplash.com/photo-1462331940025-496dfbfc7564?q=80&w=400&auto=format&fit=crop",
-        scores: {
-            emotion: 63,
-            analysis: 61,
-            critic: 34,
-            empathy: 48,
-            creative: 58,
-        },
-        changes: {
-            emotion: 10,
-            analysis: 30,
-            critic: 8,
-            empathy: 2,
-            creative: 9,
-        },
-        insight: "분석적 사고 증가에 큰 영향",
-    },
-    {
-        id: "3",
-        title: "사피엔스",
-        cover: "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?q=80&w=400&auto=format&fit=crop",
-        scores: {
-            emotion: 67,
-            analysis: 69,
-            critic: 47,
-            empathy: 51,
-            creative: 55,
-        },
-        changes: {
-            emotion: 4,
-            analysis: 8,
-            critic: 13,
-            empathy: 3,
-            creative: -3,
-        },
-        insight: "비평적 시선과 분석 사고를 동시에 자극한 책",
-    },
-    {
-        id: "4",
-        title: "데미안",
-        cover: "https://images.unsplash.com/photo-1495446815901-a7297e633e8d?q=80&w=400&auto=format&fit=crop",
-        scores: {
-            emotion: 78,
-            analysis: 54,
-            critic: 43,
-            empathy: 70,
-            creative: 58,
-        },
-        changes: {
-            emotion: 11,
-            analysis: -15,
-            critic: -4,
-            empathy: 19,
-            creative: 3,
-        },
-        insight: "감정과 자기 성찰 중심 독서 경험을 강화한 책",
-    },
-];
-
-const GUIDE_BOOKS = {
-    taste: {
-        title: "아몬드",
-        description: "감정과 공감 중심의 독서 취향에 잘 맞는 책",
-        cover: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?q=80&w=400&auto=format&fit=crop",
-    },
-    growth: {
-        title: "사피엔스",
-        description: "상대적으로 낮은 비평 사고를 확장하는 데 도움을 줄 수 있는 책",
-        cover: "https://images.unsplash.com/photo-1516979187457-637abb4f9353?q=80&w=400&auto=format&fit=crop",
-    },
-};
 
 function radarPoint(
     cx: number,
@@ -157,39 +54,47 @@ function radarPoint(
 ) {
     const angle = ((angleDeg - 90) * Math.PI) / 180;
     const r = (radius * value) / 100;
+
     return {
         x: cx + Math.cos(angle) * r,
         y: cy + Math.sin(angle) * r,
     };
 }
 
-function RadarChart({
-                        data,
-                    }: {
-    data: Record<StyleKey, number>;
-}) {
+function RadarChart({ data }: { data: Record<StyleKey, number> }) {
     const { width } = useWindowDimensions();
-    const size = Math.min(width - 60, 280);
-    const cx = size / 2;
-    const cy = size / 2 + 8;
-    const radius = size * 0.33;
-    const levels = [20, 40, 60, 80, 100];
 
+    const svgWidth = Math.min(width - 56, 300);
+    const svgHeight = 230;
+
+    const cx = svgWidth / 2;
+    const cy = 108;
+    const radius = 78;
+
+    const levels = [20, 40, 60, 80, 100];
     const angles = [-90, -18, 54, 126, 198];
 
     const points = STYLE_META.map((item, index) =>
-        radarPoint(cx, cy, radius, angles[index], data[item.key])
+        radarPoint(cx, cy, radius, angles[index], data[item.key] ?? 0)
     );
+
+    const [pressedPoint, setPressedPoint] = useState<{
+        label: string;
+        value: number;
+        x: number;
+        y: number;
+    } | null>(null);
 
     const pointString = points.map((p) => `${p.x},${p.y}`).join(" ");
 
     return (
         <View style={styles.radarWrap}>
-            <Svg width={size} height={size + 20}>
+            <Svg width={svgWidth} height={svgHeight}>
                 {levels.map((level) => {
                     const levelPoints = STYLE_META.map((_, index) =>
                         radarPoint(cx, cy, radius, angles[index], level)
                     );
+
                     return (
                         <Polygon
                             key={level}
@@ -203,6 +108,27 @@ function RadarChart({
 
                 {STYLE_META.map((item, index) => {
                     const outer = radarPoint(cx, cy, radius, angles[index], 100);
+
+                    let labelX = outer.x;
+                    let labelY = outer.y;
+
+                    if (item.key === "emotion") labelY -= 14;
+                    if (item.key === "analysis") {
+                        labelX += 10;
+                        labelY -= 2;
+                    }
+                    if (item.key === "critic") {
+                        labelX -= 10;
+                        labelY += 6;
+                    }
+                    if (item.key === "empathy") {
+                        labelX += 18;
+                        labelY += 6;
+                    }
+                    if (item.key === "creative") {
+                        labelY += 14;
+                    }
+
                     return (
                         <G key={item.key}>
                             <Line
@@ -214,9 +140,9 @@ function RadarChart({
                                 strokeWidth={1}
                             />
                             <SvgText
-                                x={outer.x}
-                                y={outer.y - (index === 0 ? 10 : 0)}
-                                fontSize={14}
+                                x={labelX}
+                                y={labelY}
+                                fontSize={13}
                                 fill={COLORS.primary}
                                 fontWeight="700"
                                 textAnchor="middle"
@@ -234,12 +160,82 @@ function RadarChart({
                     strokeWidth={2}
                 />
 
-                {points.map((p, index) => (
-                    <Circle key={index} cx={p.x} cy={p.y} r={4} fill="#B67946" />
-                ))}
+                {points.map((p, index) => {
+                    const item = STYLE_META[index];
+                    const value = Math.round(data[item.key] ?? 0);
+
+                    return (
+                        <G key={item.key}>
+                            <Circle cx={p.x} cy={p.y} r={5} fill="#B67946" />
+
+                            <Circle
+                                cx={p.x}
+                                cy={p.y}
+                                r={18}
+                                fill="transparent"
+                                onPressIn={() =>
+                                    setPressedPoint({
+                                        label: item.label,
+                                        value,
+                                        x: p.x,
+                                        y: p.y,
+                                    })
+                                }
+                                onPressOut={() => setPressedPoint(null)}
+                            />
+                        </G>
+                    );
+                })}
             </Svg>
+            {pressedPoint && (
+                <View
+                    style={{
+                        position: "absolute",
+                        left: pressedPoint.x - 40,
+                        top: pressedPoint.y - 50,
+                        backgroundColor: "#FFF",
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: "#E0DAD3",
+                        shadowColor: "#000",
+                        shadowOpacity: 0.1,
+                        shadowRadius: 4,
+                        elevation: 3,
+                    }}
+                >
+                    <Text style={{ fontWeight: "800", color: COLORS.primary }}>
+                        {pressedPoint.label} {pressedPoint.value}점
+                    </Text>
+                </View>
+            )}
         </View>
     );
+}
+
+function splitLabelLines(text: string, maxChars = 9) {
+    if (!text) return [""];
+
+    const words = text.split(" ");
+    const lines: string[] = [];
+    let current = "";
+
+    for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+
+        if (next.length <= maxChars) {
+            current = next;
+        } else {
+            if (current) lines.push(current);
+            current = word;
+        }
+    }
+
+    if (current) lines.push(current);
+    if (lines.length <= 2) return lines;
+
+    return [lines[0], `${lines[1].slice(0, Math.max(0, maxChars - 1))}…`];
 }
 
 function TimelineChart({
@@ -247,21 +243,24 @@ function TimelineChart({
                            selectedStyle,
                            onPressPoint,
                        }: {
-    books: TimelineBook[];
+    books: DiagnosisTimelineItem[];
     selectedStyle: StyleKey;
-    onPressPoint: (book: TimelineBook) => void;
+    onPressPoint: (book: DiagnosisTimelineItem) => void;
 }) {
     const { width } = useWindowDimensions();
-    const chartWidth = Math.max(width - 36, 340);
-    const chartHeight = 240;
 
-    const paddingLeft = 44;
-    const paddingRight = 26;
-    const paddingTop = 24;
-    const paddingBottom = 48;
+    const chartWidth =
+        books.length <= 3 ? width - 64 : Math.max(width - 64, books.length * 130);
 
-    const minY = 40;
-    const maxY = 80;
+    const chartHeight = 220;
+
+    const paddingLeft = 34;
+    const paddingRight = 34;
+    const paddingTop = 14;
+    const paddingBottom = 54;
+
+    const minY = 0;
+    const maxY = 100;
 
     const plotW = chartWidth - paddingLeft - paddingRight;
     const plotH = chartHeight - paddingTop - paddingBottom;
@@ -275,7 +274,7 @@ function TimelineChart({
                 ? paddingLeft + plotW / 2
                 : paddingLeft + (plotW * index) / (books.length - 1);
 
-        const y = getY(book.scores[selectedStyle]);
+        const y = getY(book.scores[selectedStyle] ?? 0);
 
         return { x, y, book };
     });
@@ -284,14 +283,20 @@ function TimelineChart({
         .map((p, index) => `${index === 0 ? "M" : "L"} ${p.x} ${p.y}`)
         .join(" ");
 
-    const yTicks = [40, 50, 60, 70, 80];
+    const yTicks = [0, 25, 50, 75, 100];
 
     return (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={books.length > 3}
+            bounces={books.length > 3}
+            contentContainerStyle={{ paddingRight: 4 }}
+        >
             <View style={styles.chartWrap}>
                 <Svg width={chartWidth} height={chartHeight}>
                     {yTicks.map((tick) => {
                         const y = getY(tick);
+
                         return (
                             <G key={tick}>
                                 <Line
@@ -303,9 +308,9 @@ function TimelineChart({
                                     strokeWidth={1}
                                 />
                                 <SvgText
-                                    x={paddingLeft - 12}
+                                    x={paddingLeft - 10}
                                     y={y + 4}
-                                    fontSize={11}
+                                    fontSize={10}
                                     fill={COLORS.primary}
                                     textAnchor="end"
                                 >
@@ -315,86 +320,320 @@ function TimelineChart({
                         );
                     })}
 
-                    <Path d={pathD} fill="none" stroke="#49505B" strokeWidth={3} />
+                    {points.length > 1 && (
+                        <Path d={pathD} fill="none" stroke="#49505B" strokeWidth={3} />
+                    )}
 
-                    {points.map((point, index) => (
-                        <G key={point.book.id}>
-                            <Circle cx={point.x} cy={point.y} r={7} fill="#49505B" />
-                            <SvgText
-                                x={point.x}
-                                y={chartHeight - 12}
-                                fontSize={11}
-                                fill={COLORS.primary}
-                                textAnchor="middle"
-                            >
-                                {point.book.title}
-                            </SvgText>
-                            <SvgText
-                                x={point.x}
-                                y={point.y - 14}
-                                fontSize={18}
-                                textAnchor="middle"
-                            >
-                                {index === 0 ? "🌱" : index === 1 ? "🪐" : index === 2 ? "📕" : "🧑"}
-                            </SvgText>
-                        </G>
-                    ))}
+                    {points.map((point) => {
+                        const labelLines = splitLabelLines(point.book.title, 8);
+
+                        return (
+                            <G key={point.book.id}>
+                                <Circle cx={point.x} cy={point.y} r={7} fill="#49505B" />
+
+                                <SvgText
+                                    x={point.x}
+                                    y={point.y - 12}
+                                    fontSize={16}
+                                    textAnchor="middle"
+                                >
+                                    📘
+                                </SvgText>
+
+                                {labelLines.map((line, idx) => (
+                                    <SvgText
+                                        key={`${point.book.id}-${idx}`}
+                                        x={point.x}
+                                        y={chartHeight - 18 + idx * 12}
+                                        fontSize={10}
+                                        fill={COLORS.primary}
+                                        textAnchor="middle"
+                                    >
+                                        {line}
+                                    </SvgText>
+                                ))}
+                            </G>
+                        );
+                    })}
                 </Svg>
 
                 <View style={StyleSheet.absoluteFill}>
-                    <View
-                        style={{
-                            flex: 1,
-                            paddingLeft,
-                            paddingRight,
-                            paddingTop,
-                            paddingBottom,
-                            flexDirection: "row",
-                        }}
-                    >
-                        {points.map((point, index) => (
-                            <Pressable
-                                key={point.book.id}
-                                onPress={() => onPressPoint(point.book)}
-                                style={{
-                                    position: "absolute",
-                                    left:
-                                        books.length === 1
-                                            ? paddingLeft + plotW / 2 - 26
-                                            : paddingLeft + (plotW * index) / (books.length - 1) - 26,
-                                    top: point.y - 32,
-                                    width: 52,
-                                    height: 64,
-                                }}
-                            />
-                        ))}
-                    </View>
+                    {points.map((point) => (
+                        <Pressable
+                            key={point.book.id}
+                            onPress={() => onPressPoint(point.book)}
+                            style={{
+                                position: "absolute",
+                                left: point.x - 24,
+                                top: point.y - 28,
+                                width: 48,
+                                height: 60,
+                            }}
+                        />
+                    ))}
                 </View>
             </View>
         </ScrollView>
     );
 }
 
+function buildChangeText(label: string, score: number, change: number | null) {
+    if (change === null) return `${label} ${score}점 · 첫 기록`;
+    if (change > 0) return `${label} ${score}점 · 이전보다 +${change}`;
+    if (change < 0) return `${label} ${score}점 · 이전보다 ${change}`;
+    return `${label} ${score}점 · 변화 없음`;
+}
+
+function GuideCard({
+                       label,
+                       book,
+                       wished,
+                       loading,
+                       onPress,
+                       onToggleWish,
+                   }: {
+    label: string;
+    book: DiagnosisGuideBook | null;
+    wished: boolean;
+    loading: boolean;
+    onPress: () => void;
+    onToggleWish: () => void;
+}) {
+    return (
+        <Pressable
+            style={({ pressed }) => [
+                styles.guideCard,
+                pressed && book && { opacity: 0.9 },
+            ]}
+            onPress={book ? onPress : undefined}
+        >
+            <View style={styles.guideHeaderRow}>
+                <Text style={styles.guideLabel}>{label}</Text>
+
+                {book && (
+                    <Pressable
+                        onPress={(e) => {
+                            e.stopPropagation();
+                            onToggleWish();
+                        }}
+                        disabled={loading || !book.isbn}
+                        hitSlop={10}
+                        style={styles.heartButton}
+                    >
+                        <Ionicons
+                            name={wished ? "heart" : "heart-outline"}
+                            size={20}
+                            color={wished ? "#E85A5A" : COLORS.primary}
+                        />
+                    </Pressable>
+                )}
+            </View>
+
+            {book ? (
+                <View style={styles.guideInnerRow}>
+                    <Image source={{ uri: book.cover }} style={styles.guideCover} />
+
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.guideBookTitle}>{book.title}</Text>
+
+                        {!!book.author && (
+                            <Text style={styles.guideAuthor}>{book.author}</Text>
+                        )}
+
+                        <Text style={styles.guideDescription}>{book.description}</Text>
+                    </View>
+                </View>
+            ) : (
+                <Text style={styles.emptyText}>추천 결과가 없습니다.</Text>
+            )}
+        </Pressable>
+    );
+}
+
 export default function ReadingPreferenceScreen() {
     const router = useRouter();
+
     const [selectedStyle, setSelectedStyle] = useState<StyleKey>("emotion");
-    const [selectedBook, setSelectedBook] = useState<TimelineBook | null>(DUMMY_TIMELINE[1]);
+    const [selectedBook, setSelectedBook] = useState<DiagnosisTimelineItem | null>(null);
     const [detailOpen, setDetailOpen] = useState(false);
 
-    const lowestStyle = useMemo(() => {
-        return STYLE_META.slice().sort(
-            (a, b) => DUMMY_PROFILE[a.key] - DUMMY_PROFILE[b.key]
-        )[0];
+    const [profile, setProfile] = useState<Record<StyleKey, number>>({
+        emotion: 0,
+        analysis: 0,
+        critic: 0,
+        empathy: 0,
+        creative: 0,
+    });
+
+    const [summary, setSummary] = useState("자가진단 결과를 불러오는 중입니다.");
+    const [timeline, setTimeline] = useState<DiagnosisTimelineItem[]>([]);
+    const [guide, setGuide] = useState<DiagnosisGuide>({
+        taste: null,
+        growth: null,
+    });
+
+    const [wishedMap, setWishedMap] = useState<Record<string, boolean>>({});
+    const [wishLoadingMap, setWishLoadingMap] = useState<Record<string, boolean>>({});
+    const [loading, setLoading] = useState(true);
+
+    const load = useCallback(async () => {
+        try {
+            setLoading(true);
+
+            const rawUser = await AsyncStorage.getItem("auth_user_id");
+            if (!rawUser) throw new Error("로그인 정보가 없습니다.");
+
+            const userId = Number(rawUser);
+            if (!userId) throw new Error("사용자 정보가 올바르지 않습니다.");
+
+            const [radarResult, trendResult, guideResult] = await Promise.allSettled([
+                getDiagnosisRadar(userId),
+                getDiagnosisTrend(userId),
+                getDiagnosisRecommendations(userId),
+            ]);
+
+            if (radarResult.status !== "fulfilled") throw radarResult.reason;
+            if (trendResult.status !== "fulfilled") throw trendResult.reason;
+
+            const radarRes = radarResult.value;
+            const trendRes = trendResult.value;
+
+            setProfile(radarRes.data.profile);
+            setSummary(radarRes.data.summary);
+            setTimeline(trendRes.data ?? []);
+            setSelectedBook((trendRes.data ?? [])[0] ?? null);
+
+            if (guideResult.status === "fulfilled") {
+                setGuide(guideResult.value.data);
+            } else {
+                setGuide({ taste: null, growth: null });
+            }
+        } catch (e) {
+            Alert.alert(
+                "불러오기 실패",
+                e instanceof Error ? e.message : "자가진단 데이터를 불러오지 못했습니다."
+            );
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    const handleOpenDetail = (book: TimelineBook) => {
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    useEffect(() => {
+        const loadWishStates = async () => {
+            try {
+                const rawUser = await AsyncStorage.getItem("auth_user_id");
+                const userId = Number(rawUser);
+
+                if (!userId) return;
+
+                const books = [guide.taste, guide.growth].filter(
+                    (book): book is DiagnosisGuideBook => !!book && !!book.isbn
+                );
+
+                if (books.length === 0) return;
+
+                const entries = await Promise.all(
+                    books.map(async (book) => {
+                        try {
+                            const res = await checkWishlist(userId, book.isbn);
+                            return [book.isbn, !!res.isWishlisted] as const;
+                        } catch {
+                            return [book.isbn, false] as const;
+                        }
+                    })
+                );
+
+                setWishedMap((prev) => ({
+                    ...prev,
+                    ...Object.fromEntries(entries),
+                }));
+            } catch (e) {
+                console.log("추천 책 찜 상태 조회 실패", e);
+            }
+        };
+
+        loadWishStates();
+    }, [guide.taste?.isbn, guide.growth?.isbn]);
+
+    const lowestStyle = useMemo(() => {
+        return STYLE_META.slice().sort((a, b) => profile[a.key] - profile[b.key])[0];
+    }, [profile]);
+
+    const selectedStyleLabel =
+        STYLE_META.find((item) => item.key === selectedStyle)?.label ?? "점수";
+
+    const selectedScore = selectedBook?.scores[selectedStyle] ?? 0;
+    const selectedChange = selectedBook?.changes[selectedStyle] ?? null;
+    const selectedInsight = selectedBook?.insights?.[selectedStyle] ?? "";
+
+    const handleOpenDetail = (book: DiagnosisTimelineItem) => {
         setSelectedBook(book);
         setDetailOpen(true);
+    };
+
+    const goRecommendedBookDetail = (book: DiagnosisGuideBook) => {
+        router.push({
+            pathname: "/(home)/resultdetails",
+            params: {
+                isbn: book.isbn,
+                title: book.title,
+                author: book.author,
+                publisher: book.publisher,
+                desc: book.description,
+                coverUrl: book.cover,
+            },
+        });
+    };
+
+    const toggleWishlist = async (book: DiagnosisGuideBook) => {
+        try {
+            if (!book.isbn) {
+                Alert.alert("오류", "책 ISBN 정보가 없어 찜할 수 없습니다.");
+                return;
+            }
+
+            const rawUser = await AsyncStorage.getItem("auth_user_id");
+            const userId = Number(rawUser);
+
+            if (!userId) {
+                Alert.alert("오류", "로그인 정보가 없습니다.");
+                return;
+            }
+
+            setWishLoadingMap((prev) => ({ ...prev, [book.isbn]: true }));
+
+            const isWished = !!wishedMap[book.isbn];
+
+            if (isWished) {
+                await removeWishlistByIsbn(userId, book.isbn);
+                setWishedMap((prev) => ({ ...prev, [book.isbn]: false }));
+            } else {
+                await addWishlist({
+                    userId,
+                    bookIsbn: book.isbn,
+                    bookTitle: book.title,
+                    author: book.author,
+                    coverImage: book.cover,
+                    publisher: book.publisher,
+                });
+
+                setWishedMap((prev) => ({ ...prev, [book.isbn]: true }));
+            }
+        } catch (e) {
+            Alert.alert("오류", e instanceof Error ? e.message : "찜 처리에 실패했습니다.");
+        } finally {
+            setWishLoadingMap((prev) => ({ ...prev, [book.isbn]: false }));
+        }
     };
 
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
+
             <SafeAreaView style={styles.safe}>
                 <View style={styles.header}>
                     <Pressable onPress={() => router.back()} hitSlop={12} style={styles.headerLeft}>
@@ -403,97 +642,103 @@ export default function ReadingPreferenceScreen() {
                     </Pressable>
                 </View>
 
-                <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-                    <View style={styles.sectionCard}>
-                        <Text style={styles.sectionTitle}>사고 스타일 프로필</Text>
-
-                        <RadarChart data={DUMMY_PROFILE} />
-
-                        <Text style={styles.profileSummary}>{DUMMY_SUMMARY}</Text>
+                {loading ? (
+                    <View style={styles.loadingWrap}>
+                        <ActivityIndicator size="large" color={COLORS.primary} />
                     </View>
+                ) : (
+                    <ScrollView
+                        contentContainerStyle={styles.container}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        <View style={styles.sectionCard}>
+                            <Text style={styles.sectionTitle}>사고 스타일 프로필</Text>
+                            <RadarChart data={profile} />
+                            <View style={styles.summaryBox}>
+                                <Text style={styles.summaryLabel}>AI 요약</Text>
+                                <Text style={styles.profileSummary}>{summary}</Text>
+                            </View>
+                        </View>
 
-                    <View style={styles.sectionCard}>
-                        <Text style={styles.sectionTitle}>독서 타임라인</Text>
+                        <View style={styles.sectionCard}>
+                            <Text style={styles.sectionTitle}>독서 타임라인</Text>
 
-                        <View style={styles.segmentWrap}>
-                            {STYLE_META.map((item) => {
-                                const active = selectedStyle === item.key;
+                            <View style={styles.segmentWrap}>
+                                {STYLE_META.map((item) => {
+                                    const active = selectedStyle === item.key;
 
-                                return (
-                                    <Pressable
-                                        key={item.key}
-                                        onPress={() => setSelectedStyle(item.key)}
-                                        style={[
-                                            styles.segmentBtn,
-                                            active && styles.segmentBtnActive,
-                                        ]}
-                                    >
-                                        <Text
+                                    return (
+                                        <Pressable
+                                            key={item.key}
+                                            onPress={() => setSelectedStyle(item.key)}
                                             style={[
-                                                styles.segmentText,
-                                                active && styles.segmentTextActive,
+                                                styles.segmentBtn,
+                                                active && styles.segmentBtnActive,
                                             ]}
                                         >
-                                            {item.label}
-                                        </Text>
-                                    </Pressable>
-                                );
-                            })}
-                        </View>
-
-                        <TimelineChart
-                            books={DUMMY_TIMELINE}
-                            selectedStyle={selectedStyle}
-                            onPressPoint={handleOpenDetail}
-                        />
-                    </View>
-
-                    <View style={styles.sectionCard}>
-                        <Text style={styles.sectionTitle}>맞춤 독서 가이드</Text>
-
-                        <View style={styles.guideRow}>
-                            <View style={styles.guideCard}>
-                                <Text style={styles.guideLabel}>당신의 스타일</Text>
-
-                                <View style={styles.guideInnerRow}>
-                                    <Image
-                                        source={{ uri: GUIDE_BOOKS.taste.cover }}
-                                        style={styles.guideCover}
-                                    />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={styles.guideBookTitle}>
-                                            {GUIDE_BOOKS.taste.title}
-                                        </Text>
-                                        <Text style={styles.guideDescription}>
-                                            {GUIDE_BOOKS.taste.description}
-                                        </Text>
-                                    </View>
-                                </View>
+                                            <Text
+                                                style={[
+                                                    styles.segmentText,
+                                                    active && styles.segmentTextActive,
+                                                ]}
+                                            >
+                                                {item.label}
+                                            </Text>
+                                        </Pressable>
+                                    );
+                                })}
                             </View>
 
-                            <View style={styles.guideCard}>
-                                <Text style={styles.guideLabel}>
-                                    추천 도서 · {lowestStyle.label} 보완
-                                </Text>
+                            {timeline.length === 0 ? (
+                                <Text style={styles.emptyText}>표시할 독서 이력이 없습니다.</Text>
+                            ) : (
+                                <TimelineChart
+                                    books={timeline}
+                                    selectedStyle={selectedStyle}
+                                    onPressPoint={handleOpenDetail}
+                                />
+                            )}
+                        </View>
 
-                                <View style={styles.guideInnerRow}>
-                                    <Image
-                                        source={{ uri: GUIDE_BOOKS.growth.cover }}
-                                        style={styles.guideCover}
-                                    />
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={styles.guideBookTitle}>
-                                            {GUIDE_BOOKS.growth.title}
-                                        </Text>
-                                        <Text style={styles.guideDescription}>
-                                            {GUIDE_BOOKS.growth.description}
-                                        </Text>
-                                    </View>
-                                </View>
+                        <View style={styles.sectionCard}>
+                            <Text style={styles.sectionTitle}>맞춤 독서 가이드</Text>
+
+                            <View style={styles.guideRow}>
+                                <GuideCard
+                                    label="당신의 스타일"
+                                    book={guide.taste}
+                                    wished={!!(guide.taste?.isbn && wishedMap[guide.taste.isbn])}
+                                    loading={!!(
+                                        guide.taste?.isbn && wishLoadingMap[guide.taste.isbn]
+                                    )}
+                                    onPress={() =>
+                                        guide.taste && goRecommendedBookDetail(guide.taste)
+                                    }
+                                    onToggleWish={() =>
+                                        guide.taste && toggleWishlist(guide.taste)
+                                    }
+                                />
+
+                                <GuideCard
+                                    label={`추천 도서 · ${lowestStyle.label} 보완`}
+                                    book={guide.growth}
+                                    wished={!!(
+                                        guide.growth?.isbn && wishedMap[guide.growth.isbn]
+                                    )}
+                                    loading={!!(
+                                        guide.growth?.isbn && wishLoadingMap[guide.growth.isbn]
+                                    )}
+                                    onPress={() =>
+                                        guide.growth && goRecommendedBookDetail(guide.growth)
+                                    }
+                                    onToggleWish={() =>
+                                        guide.growth && toggleWishlist(guide.growth)
+                                    }
+                                />
                             </View>
                         </View>
-                    </View>
-                </ScrollView>
+                    </ScrollView>
+                )}
 
                 <Modal
                     visible={detailOpen}
@@ -506,18 +751,20 @@ export default function ReadingPreferenceScreen() {
                             <Text style={styles.modalBookTitle}>{selectedBook?.title}</Text>
 
                             {selectedBook && (
-                                <>
-                                    <View style={styles.modalBulletWrap}>
-                                        <Text style={styles.modalBullet}>
-                                            {STYLE_META.find((item) => item.key === selectedStyle)?.label}{" "}
-                                            {selectedBook.changes[selectedStyle] >= 0 ? "+" : ""}
-                                            {selectedBook.changes[selectedStyle]}
-                                        </Text>
-                                        <Text style={styles.modalBullet}>
-                                            → {selectedBook.insight}
-                                        </Text>
-                                    </View>
-                                </>
+                                <View style={styles.modalBulletWrap}>
+                                    <Text style={styles.modalBullet}>
+                                        {buildChangeText(
+                                            selectedStyleLabel,
+                                            selectedScore,
+                                            selectedChange
+                                        )}
+                                    </Text>
+                                    <Text style={styles.modalBullet}>
+                                        →{" "}
+                                        {selectedInsight ||
+                                            "이 책이 사고 변화에 영향을 주었습니다."}
+                                    </Text>
+                                </View>
                             )}
 
                             <Pressable
@@ -539,56 +786,88 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: COLORS.bg,
     },
+
     header: {
         paddingHorizontal: 16,
         paddingTop: 8,
         paddingBottom: 4,
     },
+
     headerLeft: {
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
     },
+
     headerTitle: {
         fontSize: 18,
         fontWeight: "900",
         color: COLORS.primary,
     },
+
+    loadingWrap: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+
     container: {
         paddingHorizontal: 16,
-        paddingBottom: 30,
-        gap: 14,
+        paddingBottom: 18,
+        gap: 10,
     },
+
     sectionCard: {
         backgroundColor: COLORS.white,
         borderRadius: 18,
         borderWidth: 1,
         borderColor: "#ECE4DD",
-        padding: 16,
+        padding: 14,
     },
+
     sectionTitle: {
         fontSize: 17,
         fontWeight: "900",
         color: COLORS.primary,
-        marginBottom: 12,
+        marginBottom: 8,
     },
+
     radarWrap: {
         alignItems: "center",
         justifyContent: "center",
+        position: "relative",
+        marginTop: 0,
+        marginBottom: 0,
     },
+
     profileSummary: {
-        marginTop: 6,
-        fontSize: 14,
-        lineHeight: 24,
-        fontWeight: "800",
+        fontSize: 13,
+        lineHeight: 21,
+        fontWeight: "700",
         color: COLORS.primary,
+    },
+    summaryBox: {
+        marginTop: 10,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        backgroundColor: "#FFFDFC",
+        padding: 12,
+    },
+
+    summaryLabel: {
+        color: COLORS.muted,
+        fontSize: 12,
+        fontWeight: "900",
+        marginBottom: 6,
     },
     segmentWrap: {
         flexDirection: "row",
         flexWrap: "wrap",
         gap: 8,
-        marginBottom: 14,
+        marginBottom: 8,
     },
+
     segmentBtn: {
         paddingHorizontal: 16,
         paddingVertical: 10,
@@ -597,24 +876,36 @@ const styles = StyleSheet.create({
         borderColor: "#E5DCD3",
         backgroundColor: COLORS.white,
     },
+
     segmentBtnActive: {
         backgroundColor: "#B19277",
         borderColor: "#B19277",
     },
+
     segmentText: {
         color: COLORS.primary,
         fontWeight: "800",
     },
+
     segmentTextActive: {
         color: COLORS.white,
     },
+
     chartWrap: {
         position: "relative",
-        alignSelf: "center",
+        alignSelf: "flex-start",
     },
+
+    emptyText: {
+        color: COLORS.muted,
+        fontSize: 13,
+        fontWeight: "700",
+    },
+
     guideRow: {
         gap: 12,
     },
+
     guideCard: {
         borderRadius: 14,
         borderWidth: 1,
@@ -622,29 +913,61 @@ const styles = StyleSheet.create({
         backgroundColor: "#FFFDFC",
         padding: 12,
     },
+
+    guideHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 10,
+    },
+
     guideLabel: {
         color: COLORS.primary,
         fontSize: 14,
         fontWeight: "900",
-        marginBottom: 10,
+        flex: 1,
+        paddingRight: 8,
     },
+
+    heartButton: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#FFFDFC",
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+
     guideInnerRow: {
         flexDirection: "row",
         gap: 12,
         alignItems: "center",
     },
+
     guideCover: {
         width: 70,
         height: 98,
         borderRadius: 10,
         backgroundColor: COLORS.secondary,
     },
+
     guideBookTitle: {
         color: COLORS.primary,
         fontSize: 15,
         fontWeight: "900",
-        marginBottom: 6,
+        marginBottom: 4,
     },
+
+    guideAuthor: {
+        marginTop: 2,
+        marginBottom: 4,
+        fontSize: 11,
+        fontWeight: "700",
+        color: COLORS.neutralDark,
+    },
+
     guideDescription: {
         color: COLORS.primary,
         fontSize: 13,
@@ -652,32 +975,38 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         flexShrink: 1,
     },
+
     modalBackdrop: {
         flex: 1,
         backgroundColor: "rgba(0,0,0,0.2)",
         justifyContent: "center",
         paddingHorizontal: 24,
     },
+
     modalCard: {
         backgroundColor: COLORS.white,
         borderRadius: 20,
         padding: 18,
     },
+
     modalBookTitle: {
         color: COLORS.primary,
         fontSize: 19,
         fontWeight: "900",
         marginBottom: 14,
     },
+
     modalBulletWrap: {
         gap: 10,
     },
+
     modalBullet: {
         color: COLORS.primary,
         fontSize: 14,
         lineHeight: 22,
         fontWeight: "800",
     },
+
     modalCloseBtn: {
         marginTop: 18,
         alignSelf: "center",
@@ -686,6 +1015,7 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         backgroundColor: "#B19277",
     },
+
     modalCloseText: {
         color: COLORS.white,
         fontWeight: "900",

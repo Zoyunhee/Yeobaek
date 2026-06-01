@@ -10,4 +10,4 @@ export default function TopicCard({ title, body }: { title: string; body: string
         </View>
     );
 }
- // 발제문 카드
+// 발제문 카드
